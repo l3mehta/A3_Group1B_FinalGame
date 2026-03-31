@@ -3,14 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Open Mind</title>
+    <title>A Mind in Motion</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <!-- ── START SCREEN ── -->
     <div id="start-screen">
-      <h1>OPEN MIND</h1>
-      <p>LOW-POLY DRIVING · ROBLOX-STYLE OPEN WORLD</p>
+      <h1>A MIND IN MOTION</h1>
       <button id="start-btn" onclick="startGame()">START DRIVING</button>
       <p style="margin-top: 20px; font-size: 12px">
         WASD or Arrow Keys · Hold Shift to boost
@@ -32,6 +31,7 @@
 
       <div id="mission-panel">
         <div class="mission-title">Mission</div>
+        <div id="mission-level" class="mission-level">TUTORIAL</div>
         <div id="mission-steps">
           <div class="step-dot active" id="dot-0"></div>
           <div class="step-dot" id="dot-1"></div>
@@ -60,6 +60,77 @@
     <!-- ── CHECKPOINT FLASH ── -->
     <div id="cp-flash"></div>
 
+    <!-- ── TUTORIAL NOTIFICATION ── -->
+    <div id="tutorial-notification" class="tutorial-notification"></div>
+
+    <!-- ── MISSION BAR FOCUS OVERLAY ── -->
+    <div id="mission-focus-overlay" class="mission-focus-overlay"></div>
+
+    <!-- ── TUTORIAL COMPLETION ── -->
+    <div id="tutorial-completion" class="tutorial-completion">
+      <div class="tutorial-completion-card">
+        <h2>Congratulations!</h2>
+        <p>You have completed the tutorial</p>
+        <p class="tutorial-subtitle">You've learned the basics of the game.</p>
+        <div class="tutorial-completion-buttons">
+          <button class="tutorial-btn" onclick="restartMission()">Restart Tutorial</button>
+          <button class="tutorial-btn primary" onclick="switchLevel('level1')">Play Level 1</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LEVEL 1 COMPLETION ── -->
+    <div id="level1-completion" class="tutorial-completion">
+      <div class="tutorial-completion-card">
+        <h2>Congratulations!</h2>
+        <p>You have completed LEVEL 1</p>
+        <p class="tutorial-subtitle">You're ready for the next challenge.</p>
+        <div class="tutorial-completion-buttons">
+          <button class="tutorial-btn" onclick="restartMission()">Replay Level 1</button>
+          <button class="tutorial-btn primary" onclick="switchLevel('level2')">Continue to Level 2</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LEVEL 2 COMPLETION ── -->
+    <div id="level2-completion" class="tutorial-completion">
+      <div class="tutorial-completion-card">
+        <h2>Congratulations!</h2>
+        <p>You have completed LEVEL 2</p>
+        <p class="tutorial-subtitle">You're almost at the end.</p>
+        <div class="tutorial-completion-buttons">
+          <button class="tutorial-btn" onclick="restartMission()">Replay Level 2</button>
+          <button class="tutorial-btn primary" onclick="switchLevel('level3')">Continue to Level 3</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LEVEL 3 COMPLETION ── -->
+    <div id="level3-completion" class="tutorial-completion">
+      <div class="tutorial-completion-card">
+        <h2>Congratulations!</h2>
+        <p>You have completed LEVEL 3</p>
+        <p class="tutorial-subtitle">You've finished the game!</p>
+        <div class="tutorial-completion-buttons">
+          <button class="tutorial-btn" onclick="restartMission()">Replay Level 3</button>
+          <button class="tutorial-btn primary" onclick="switchLevel('tutorial')">Return to Tutorial</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── LEVEL TIMEOUT ── -->
+    <div id="level-timeout" class="tutorial-completion">
+      <div class="tutorial-completion-card">
+        <h2>Time's Up!</h2>
+        <p>You didn't complete this level in time.</p>
+        <p class="tutorial-subtitle">Complete the level within 30 seconds!</p>
+        <div class="tutorial-completion-buttons">
+          <button class="tutorial-btn" onclick="restartMission()">Retry This Level</button>
+          <button class="tutorial-btn secondary" onclick="goToPreviousLevel()">Go Back to Previous Level</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ── WIN SCREEN ── -->
     <div id="win-screen">
       <div id="win-card">
@@ -81,6 +152,17 @@
 
     <!-- Three.js library (must load before sketch.js) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Level definitions (must load before sketch.js) -->
+    <script src="levels/tutorial.js"></script>
+    <script src="levels/level1.js"></script>
+    <script src="levels/level2.js"></script>
+    <script src="levels/level3.js"></script>
+    
+    <!-- Episode configurations (must load before sketch.js) -->
+    <script src="levels/euthymia.js"></script>
+    <script src="levels/depressive.js"></script>
+    <script src="levels/manic.js"></script>
 
     <!-- Main game code -->
     <script src="sketch.js"></script>

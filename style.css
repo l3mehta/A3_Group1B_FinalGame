@@ -182,6 +182,14 @@ body {
   margin-bottom: 14px;
   opacity: 0.8;
 }
+.mission-level {
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #7eb8f5;
+  margin-bottom: 12px;
+  opacity: 0.7;
+}
 #mission-objective {
   font-size: 24px;
   font-weight: 800;
@@ -383,3 +391,157 @@ body {
 #cp-flash.flash {
   opacity: 1;
 }
+
+/* ── TUTORIAL NOTIFICATION ── */
+.tutorial-notification {
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(6, 14, 22, 0.92);
+  border: 2px solid rgba(126, 245, 168, 0.45);
+  border-radius: 20px;
+  padding: 24px 48px;
+  color: white;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(18px);
+  pointer-events: none;
+  z-index: 120;
+  text-align: center;
+  white-space: pre-line;
+  opacity: 0;
+  transition: opacity 0.3s;
+  box-shadow:
+    0 0 50px rgba(126, 245, 168, 0.18),
+    0 0 0 1px rgba(126, 245, 168, 0.08),
+    0 12px 48px rgba(0, 0, 0, 0.7);
+}
+.tutorial-notification.show {
+  opacity: 1;
+}
+
+/* ── TUTORIAL COMPLETION ── */
+.tutorial-completion {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 160;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.tutorial-completion.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tutorial-completion-card {
+  background: rgba(6, 14, 22, 0.95);
+  border: 2px solid rgba(126, 245, 168, 0.45);
+  border-radius: 24px;
+  padding: 48px 64px;
+  text-align: center;
+  color: white;
+  max-width: 500px;
+  box-shadow:
+    0 0 80px rgba(126, 245, 168, 0.25),
+    0 0 0 1px rgba(126, 245, 168, 0.15);
+}
+.tutorial-completion-card h2 {
+  font-size: 36px;
+  margin-bottom: 16px;
+  color: #7ef5a8;
+  letter-spacing: -0.5px;
+}
+.tutorial-completion-card p {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 32px;
+}
+.tutorial-subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5) !important;
+  margin-bottom: 24px !important;
+}
+.tutorial-completion-buttons {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+.tutorial-btn {
+  background: rgba(126, 245, 168, 0.15);
+  border: 2px solid rgba(126, 245, 168, 0.35);
+  border-radius: 12px;
+  padding: 12px 28px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-transform: uppercase;
+}
+.tutorial-btn:hover {
+  background: rgba(126, 245, 168, 0.25);
+  border-color: rgba(126, 245, 168, 0.6);
+  box-shadow: 0 0 16px rgba(126, 245, 168, 0.3);
+}
+.tutorial-btn.primary {
+  background: rgba(126, 245, 168, 0.3);
+  border-color: #7ef5a8;
+  color: #7ef5a8;
+}
+.tutorial-btn.primary:hover {
+  background: rgba(126, 245, 168, 0.4);
+  box-shadow: 0 0 24px rgba(126, 245, 168, 0.5);
+}
+
+/* ── MISSION PANEL GLOW ── */
+#mission-panel.glow {
+  border-color: rgba(126, 245, 168, 0.9);
+  box-shadow:
+    0 0 80px rgba(126, 245, 168, 0.4),
+    0 0 0 1px rgba(126, 245, 168, 0.2),
+    0 12px 48px rgba(0, 0, 0, 0.7);
+  animation: glow-pulse 1s ease-in-out;
+}
+@keyframes glow-pulse {
+  0%, 100% {
+    border-color: rgba(126, 245, 168, 0.45);
+    box-shadow:
+      0 0 50px rgba(126, 245, 168, 0.18),
+      0 0 0 1px rgba(126, 245, 168, 0.08),
+      0 12px 48px rgba(0, 0, 0, 0.7);
+  }
+  50% {
+    border-color: rgba(126, 245, 168, 0.9);
+    box-shadow:
+      0 0 80px rgba(126, 245, 168, 0.4),
+      0 0 0 1px rgba(126, 245, 168, 0.2),
+      0 12px 48px rgba(0, 0, 0, 0.7);
+  }
+}
+
+/* ── MISSION BAR FOCUS OVERLAY ── */
+#mission-focus-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 110;
+  background: radial-gradient(
+    circle at top right,
+    rgba(0, 0, 0, 0) 300px,
+    rgba(0, 0, 0, 0.7) 800px
+  );
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+#mission-focus-overlay.show {
+  opacity: 1;
+}
+
+

@@ -14,6 +14,36 @@ let displaySpeed = 0; // smoothed km/h shown in HUD — interpolates toward real
 let gameRunning = false;
 const ROAD_Y = 0.11;
 
+// ─── LIGHTING REFERENCES ──────────────────────────────────────────────────────
+let ambientLight = null; // Reference to ambient light for dynamic adjustment
+let sunLight = null; // Reference to directional light for dynamic adjustment
+
+// ─── POST-PROCESSING (for fisheye distortion) ─────────────────────────────────
+let fisheyeRenderTarget = null; // Render target for distortion effect
+let fisheyeMaterial = null; // Material with distortion shader
+let distortionQuad = null; // Full-screen quad for applying distortion
+let distortionScene = null; // Scene containing the distortion quad
+let distortionCamera = null; // Orthographic camera for post-processing pass
+
+// ─── LEVEL SYSTEM ─────────────────────────────────────────────────────────────
+let currentLevel = "tutorial"; // Current level: "tutorial", "level1", "level2", or "level3"
+
+// Level definitions — loaded from separate level files (tutorial.js, level1.js, level2.js, level3.js)
+const LEVELS = {
+  tutorial: TUTORIAL_LEVEL.checkpoints,
+  level1: LEVEL1.checkpoints,
+  level2: LEVEL2.checkpoints,
+  level3: LEVEL3.checkpoints,
+};
+
+// Map of level names to their display names
+const LEVEL_NAMES = {
+  tutorial: TUTORIAL_LEVEL.displayName,
+  level1: LEVEL1.displayName,
+  level2: LEVEL2.displayName,
+  level3: LEVEL3.displayName,
+};
+
 // ─── COLLISION SYSTEM ─────────────────────────────────────────────────────────
 // Each collider is an axis-aligned bounding box viewed from above: { cx, cz, hw, hd }
 // cx/cz = world-space centre, hw = half-width (X axis), hd = half-depth (Z axis).
@@ -56,22 +86,355 @@ function resolveCollisions() {
 
 // ─── MISSION SYSTEM ───────────────────────────────────────────────────────────
 // The player must reach each checkpoint in order to win.
-const CHECKPOINTS = [
-  { x: -75, z: 55, r: 10, label: "Gas Station", color: 0xf5a623, emoji: "⛽" },
-  { x: 0, z: -25, r: 12, label: "Downtown", color: 0x4ecdc4, emoji: "🏙️" },
-  { x: 80, z: 70, r: 12, label: "Waterfront", color: 0x7bb8f5, emoji: "🌉" },
-];
+let CHECKPOINTS = LEVELS[currentLevel]; // Current level's checkpoints
 
 let missionActive = false;
 let missionComplete = false;
 let currentCP = 0; // index of the checkpoint the player is heading to
 let missionStart = 0; // Date.now() snapshot when mission began
 let missionElapsed = 0; // seconds elapsed (updated each frame)
+let missionTimeoutShown = false; // track if 30-second timeout popup has been shown
 let cpMarkers = []; // Three.js groups — one beacon per checkpoint
 let markerRotation = 0; // accumulates each frame for spinning animation
 
+// ─── TUTORIAL SYSTEM ──────────────────────────────────────────────────────────
+let tutorialActive = false;
+let tutorialStepIndex = 0;
+let tutorialStartTime = 0;
+let tutorialKeysPressed = {}; // Track which tutorial keys have been pressed
+let tutorialCompleted = false;
+
+// ─── EPISODE SYSTEM (for tutorial state transitions) ────────────────────────────
+let currentEpisode = "euthymia"; // Current episode: "euthymia", "depressive", or "manic"
+let episodeStartTime = 0; // When the current episode began
+let lockDepressiveEpisode = false; // Developer shortcut: lock to depressive episode (press 1)
+let lockManicEpisode = false; // Developer shortcut: lock to manic episode (press 2)
+
+// Level 1 unpredictable episode system
+let level1EpisodeSchedule = []; // Array of episode start times for the level
+let level1EpisodeDurations = []; // Array of episode durations (randomized for each episode)
+let level1CurrentEpisodeIndex = 0; // Track which episode in the schedule we're on
+
+// ─── MINIMAP DISCOVERY SYSTEM ──────────────────────────────────────────────────
+// Tracks which zones have been visited during depressive episode
+let visitedZones = {}; // { "Grassy Fields NW": true, "Downtown": true, ... }
+// Tracks which road segments have been discovered during depressive episode
+let discoveredRoads = {}; // { "0,-85": true, ... } — keyed by "x,z" road center position
+// Off-screen canvas to track explored areas during depressive episode
+let exploredAreaCanvas = null;
+let exploredAreaCtx = null;
+
+function startTutorialFlow() {
+  if (currentLevel !== "tutorial") return;
+  tutorialActive = true;
+  tutorialStepIndex = 0;
+  tutorialStartTime = Date.now();
+  tutorialKeysPressed = {};
+  tutorialCompleted = false;
+  currentEpisode = "euthymia"; // Start with euthymia episode
+  showNextTutorialStep();
+}
+
+function checkTutorialKeyCompletion() {
+  if (!tutorialActive || tutorialCompleted) return;
+  
+  var tutorialFlow = TUTORIAL_LEVEL.tutorialFlow;
+  var currentStep = tutorialFlow[tutorialStepIndex];
+  
+  if (!currentStep || currentStep.type !== "wait-keys") return;
+  
+  // Check if required keys have been pressed
+  // For shift keys, only need one of them; for other keys, need all of them
+  var allKeyPressed = false;
+  if (currentStep.keys.includes("ShiftLeft") || currentStep.keys.includes("ShiftRight")) {
+    // For shift, check if either ShiftLeft or ShiftRight is pressed
+    allKeyPressed = tutorialKeysPressed["ShiftLeft"] || tutorialKeysPressed["ShiftRight"];
+  } else {
+    // For other keys (like WASD), check if all are pressed
+    allKeyPressed = currentStep.keys.every(function (key) {
+      return tutorialKeysPressed[key];
+    });
+  }
+  
+  if (allKeyPressed) {
+    flashSuccessOverlay();
+    var notif = document.getElementById("tutorial-notification");
+    if (notif) {
+      notif.classList.remove("show");
+    }
+    tutorialStepIndex++;
+    // Wait for success overlay (1 second) + CSS transition (0.3s) before showing next step
+    setTimeout(function () {
+      if (tutorialActive && !tutorialCompleted) {
+        showNextTutorialStep();
+      }
+    }, 1350);
+  }
+}
+
+function flashSuccessOverlay() {
+  var flash = document.getElementById("cp-flash");
+  if (flash) {
+    flash.classList.add("flash");
+    setTimeout(function () {
+      flash.classList.remove("flash");
+    }, 1000);
+  }
+}
+
+function showNextTutorialStep() {
+  var tutorialFlow = TUTORIAL_LEVEL.tutorialFlow;
+  
+  // If all steps are complete, show completion screen
+  if (!tutorialFlow || tutorialStepIndex >= tutorialFlow.length) {
+    showTutorialCompletion();
+    tutorialCompleted = true;
+    return;
+  }
+
+  var step = tutorialFlow[tutorialStepIndex];
+  var notif = document.getElementById("tutorial-notification");
+  if (!notif) return;
+
+  notif.textContent = step.message;
+  notif.className = "tutorial-notification show";
+
+  // Detect which episode this step represents and update currentEpisode
+  if (step.type === "state-message" && !lockDepressiveEpisode && !lockManicEpisode) {
+    if (step.message.includes("Euthymia")) {
+      currentEpisode = "euthymia";
+    } else if (step.message.includes("Depressive")) {
+      currentEpisode = "depressive";
+      visitedZones = {}; // Clear zone discoveries when entering depressive episode
+      discoveredRoads = {}; // Clear road discoveries when entering depressive episode
+      // Initialize explored area canvas for this depressive episode
+      exploredAreaCanvas = document.createElement("canvas");
+      exploredAreaCanvas.width = 200;
+      exploredAreaCanvas.height = 200;
+      exploredAreaCtx = exploredAreaCanvas.getContext("2d");
+      exploredAreaCtx.fillStyle = "rgba(100, 140, 180, 0.5)"; // Blue-grey tint for visited areas
+      console.log("DEPRESSIVE EPISODE STARTED: visitedZones, discoveredRoads, and exploredAreaCanvas cleared");
+    } else if (step.message.includes("Manic")) {
+      currentEpisode = "manic";
+    }
+    episodeStartTime = Date.now();
+  }
+
+  if (step.type === "glow-mission") {
+    glowMissionPanel();
+    setTimeout(function () {
+      notif.classList.remove("show");
+      tutorialStepIndex++;
+      // Wait for CSS transition (0.3s) to complete before showing next step
+      setTimeout(function () {
+        if (tutorialActive && !tutorialCompleted) {
+          showNextTutorialStep();
+        }
+      }, 350);
+    }, step.duration || 3000);
+  } else if (step.type === "wait-keys") {
+    // Keep message visible until keys are pressed, handled by checkTutorialKeyCompletion()
+  } else if (step.type === "state-message") {
+    // Show for the specified duration then advance
+    setTimeout(function () {
+      if (!tutorialCompleted) {
+        notif.classList.remove("show");
+        tutorialStepIndex++;
+        // Wait for CSS transition (0.3s) to complete before showing next step
+        setTimeout(function () {
+          if (tutorialActive && !tutorialCompleted) {
+            showNextTutorialStep();
+          }
+        }, 350);
+      }
+    }, step.duration || 3000);
+  }
+}
+
+function scheduleNextTutorialStep() {
+  var tutorialFlow = TUTORIAL_LEVEL.tutorialFlow;
+  if (tutorialStepIndex >= tutorialFlow.length) return;
+
+  var step = tutorialFlow[tutorialStepIndex];
+  var elapsed = Date.now() - tutorialStartTime;
+  var nextDelay = Math.max(0, step.delay - elapsed);
+
+  setTimeout(function () {
+    if (tutorialActive && !tutorialCompleted) {
+      showNextTutorialStep();
+    }
+  }, nextDelay);
+}
+
+function glowMissionPanel() {
+  var panel = document.getElementById("mission-panel");
+  var overlay = document.getElementById("mission-focus-overlay");
+  
+  if (panel) {
+    panel.classList.add("glow");
+  }
+  
+  if (overlay) {
+    overlay.classList.add("show");
+    setTimeout(function () {
+      overlay.classList.remove("show");
+    }, 3000);
+  }
+  
+  if (panel) {
+    setTimeout(function () {
+      panel.classList.remove("glow");
+    }, 5000);
+  }
+}
+
+function showTutorialCompletion() {
+  document.getElementById("tutorial-completion").classList.add("show");
+}
+
+// Dynamically build mission progress dots based on checkpoint count
+function buildMissionSteps() {
+  var stepsContainer = document.getElementById("mission-steps");
+  if (!stepsContainer) return;
+  
+  // Clear existing dots
+  stepsContainer.innerHTML = "";
+  
+  // Create a dot for each checkpoint
+  CHECKPOINTS.forEach(function (_, i) {
+    var dot = document.createElement("div");
+    dot.className = "step-dot";
+    dot.id = "dot-" + i;
+    if (i === 0) {
+      dot.classList.add("active");
+    }
+    stepsContainer.appendChild(dot);
+  });
+}
+
+// Generate unpredictable episode schedule for Level 1
+// Randomly distributes episodeCount episodes throughout the 30-second level
+function generateLevel1EpisodeSchedule() {
+  level1EpisodeSchedule = [];
+  level1EpisodeDurations = [];
+  level1CurrentEpisodeIndex = 0;
+  
+  // Only generate schedule for Level 1
+  if (currentLevel !== "level1") return;
+  
+  var levelConfig = LEVEL1;
+  var episodeCount = levelConfig.episodeCount || 3;
+  var episodeDurationMin = levelConfig.episodeDurationMin || 2000;
+  var episodeDurationMax = levelConfig.episodeDurationMax || 6000;
+  var levelDuration = 30000; // 30 seconds in milliseconds
+  var maxGapBetweenEpisodes = 3000; // Maximum 3 seconds between end of one episode and start of next
+  var minGapBetweenEpisodes = 0.5 * 1000; // Minimum 0.5 seconds gap for unpredictability
+  
+  // Generate random duration for each episode
+  for (var i = 0; i < episodeCount; i++) {
+    var randomDuration = episodeDurationMin + Math.random() * (episodeDurationMax - episodeDurationMin);
+    level1EpisodeDurations.push(randomDuration);
+  }
+  
+  // Schedule episodes with maximum 3-second gaps between them
+  var currentTime = 0.5 * 1000; // Start first episode at least 0.5 seconds in
+  
+  for (var i = 0; i < episodeCount; i++) {
+    // Record start time of this episode
+    level1EpisodeSchedule.push(currentTime);
+    
+    // Move to the end of this episode
+    currentTime += level1EpisodeDurations[i];
+    
+    // Add gap before next episode (random between 0.5 and 3 seconds)
+    if (i < episodeCount - 1) {
+      var randomGap = minGapBetweenEpisodes + Math.random() * (maxGapBetweenEpisodes - minGapBetweenEpisodes);
+      currentTime += randomGap;
+      
+      // Safety check: if next episode would exceed level duration, clamp it
+      var remainingTime = levelDuration - currentTime;
+      var remainingEpisodes = episodeCount - i - 1;
+      var minRemainingTime = remainingEpisodes * (episodeDurationMin + minGapBetweenEpisodes);
+      
+      if (remainingTime < minRemainingTime) {
+        // Adjust current time to fit remaining episodes
+        currentTime = levelDuration - minRemainingTime;
+      }
+    }
+  }
+  
+  console.log("Level 1 Episode Schedule Generated (Max 3 seconds between episodes):", 
+    level1EpisodeSchedule.map(function(t, i) { 
+      return (t/1000).toFixed(1) + "s (duration: " + (level1EpisodeDurations[i]/1000).toFixed(1) + "s)"; 
+    }).join(", "));
+}
+
+// Update episode state for Level 1 - manages unpredictable episode transitions
+function updateLevel1Episodes() {
+  if (currentLevel !== "level1" || !missionActive || missionComplete) return;
+  if (lockDepressiveEpisode || lockManicEpisode) return; // Skip if developer locked
+  
+  var missionElapsedMs = missionElapsed * 1000;
+  
+  // Check if we should start the next episode
+  if (level1CurrentEpisodeIndex < level1EpisodeSchedule.length) {
+    var nextEpisodeStart = level1EpisodeSchedule[level1CurrentEpisodeIndex];
+    var nextEpisodeDuration = level1EpisodeDurations[level1CurrentEpisodeIndex];
+    var nextEpisodeEnd = nextEpisodeStart + nextEpisodeDuration;
+    
+    // DEBUG: Log episode timing (remove after testing)
+    if (missionElapsedMs % 1000 < 50) { // Log once per second
+      console.log("Level 1 Episode Check | Time: " + (missionElapsedMs/1000).toFixed(1) + "s | Episode " + level1CurrentEpisodeIndex + 
+        " | Window: " + (nextEpisodeStart/1000).toFixed(1) + "-" + (nextEpisodeEnd/1000).toFixed(1) + "s | Current State: " + currentEpisode);
+    }
+    
+    if (missionElapsedMs >= nextEpisodeStart && missionElapsedMs < nextEpisodeEnd) {
+      // We're within an episode
+      if (currentEpisode !== "depressive") {
+        console.log("🔴 ENTERING DEPRESSIVE EPISODE " + level1CurrentEpisodeIndex + " at time " + (missionElapsedMs/1000).toFixed(1) + "s");
+        currentEpisode = "depressive";
+        episodeStartTime = Date.now();
+        
+        // Initialize explored area canvas for fog-of-war discovery
+        visitedZones = {}; // Clear zone discoveries 
+        discoveredRoads = {}; // Clear road discoveries
+        exploredAreaCanvas = document.createElement("canvas");
+        exploredAreaCanvas.width = 200;
+        exploredAreaCanvas.height = 200;
+        exploredAreaCtx = exploredAreaCanvas.getContext("2d");
+        exploredAreaCtx.fillStyle = "rgba(100, 140, 180, 0.5)"; // Blue-grey tint for visited areas
+        console.log("🔴 Level 1 depressive episode started: fog-of-war discovery initialized");
+      }
+    } else if (missionElapsedMs >= nextEpisodeEnd) {
+      // Episode is over, move to next one
+      console.log("🟢 EXITING DEPRESSIVE EPISODE " + level1CurrentEpisodeIndex + " at time " + (missionElapsedMs/1000).toFixed(1) + "s");
+      level1CurrentEpisodeIndex++;
+      currentEpisode = "euthymia";
+      // Reset fog-of-war for normal mode
+      exploredAreaCanvas = null;
+      exploredAreaCtx = null;
+    }
+  } else {
+    // All episodes are done, return to euthymia
+    currentEpisode = "euthymia";
+  }
+}
+
 // Spawn 3D beacon markers into the scene (call once, inside init)
 function buildCheckpointMarkers() {
+  // Skip checkpoint markers for tutorial level
+  if (currentLevel === "tutorial") {
+    cpMarkers.forEach(function (marker) {
+      scene.remove(marker);
+    });
+    cpMarkers = [];
+    return;
+  }
+
+  // Remove old markers from scene
+  cpMarkers.forEach(function (marker) {
+    scene.remove(marker);
+  });
   cpMarkers = [];
   CHECKPOINTS.forEach(function (cp, i) {
     var group = new THREE.Group();
@@ -153,6 +516,7 @@ function beginMission() {
   missionComplete = false;
   missionStart = Date.now();
   missionElapsed = 0;
+  missionTimeoutShown = false; // reset timeout flag for new mission
   updateMissionHUD();
 
   // Reset progress dots in the HUD
@@ -168,6 +532,16 @@ function beginMission() {
   cpMarkers.forEach(function (g, i) {
     g.visible = i === 0;
   });
+
+  // Start tutorial flow if in tutorial level
+  if (currentLevel === "tutorial") {
+    startTutorialFlow();
+  }
+  
+  // Generate episode schedule if in level 1
+  if (currentLevel === "level1") {
+    generateLevel1EpisodeSchedule();
+  }
 }
 
 // Format a seconds value as "m:ss"
@@ -183,21 +557,55 @@ function updateMissionHUD() {
   missionElapsed = (Date.now() - missionStart) / 1000;
 
   var timerEl = document.getElementById("mission-timer");
-  timerEl.textContent = formatTime(missionElapsed);
-  timerEl.classList.toggle("urgent", missionElapsed > 90);
+  
+  // For non-tutorial levels, show countdown timer
+  if (currentLevel !== "tutorial") {
+    var timeRemaining = Math.max(0, 30 - missionElapsed);
+    timerEl.textContent = formatTime(timeRemaining);
+    // Flash red when 10 seconds or less remain
+    timerEl.classList.toggle("urgent", timeRemaining <= 10);
+  } else {
+    // Tutorial: show elapsed time as normal
+    timerEl.textContent = formatTime(missionElapsed);
+    timerEl.classList.toggle("urgent", missionElapsed > 90);
+  }
 
-  var cp = CHECKPOINTS[currentCP];
-  var dx = car.position.x - cp.x;
-  var dz = car.position.z - cp.z;
-  var dist = Math.round(Math.sqrt(dx * dx + dz * dz));
-  document.getElementById("mission-dist").textContent = dist;
-  document.getElementById("mission-objective").innerHTML =
-    "Drive to <strong>" + cp.emoji + " " + cp.label + "</strong>";
+  // Check for 30-second timeout on non-tutorial levels
+  if (currentLevel !== "tutorial" && !missionTimeoutShown && missionElapsed >= 30) {
+    missionTimeoutShown = true;
+    missionActive = false;
+    document.getElementById("level-timeout").classList.add("show");
+    return;
+  }
+
+  // In tutorial, hide checkpoint destination and distance
+  if (currentLevel !== "tutorial") {
+    var cp = CHECKPOINTS[currentCP];
+    var dx = car.position.x - cp.x;
+    var dz = car.position.z - cp.z;
+    var dist = Math.round(Math.sqrt(dx * dx + dz * dz));
+    document.getElementById("mission-dist").textContent = dist;
+    document.getElementById("mission-objective").innerHTML =
+      "Drive to <strong>" + cp.emoji + " " + cp.label + "</strong>";
+  } else {
+    // Tutorial mode: show generic message
+    document.getElementById("mission-objective").innerHTML = "Follow the tutorial instructions";
+  }
+
+  updateLevelDisplay();
+}
+
+function updateLevelDisplay() {
+  var levelEl = document.getElementById("mission-level");
+  if (levelEl) {
+    levelEl.textContent = LEVEL_NAMES[currentLevel] || "UNKNOWN";
+  }
 }
 
 // Test whether the car has entered the active checkpoint's trigger radius
 function checkCheckpoints() {
   if (!missionActive || missionComplete) return;
+  if (currentLevel === "tutorial") return; // Skip checkpoint detection during tutorial
   var cp = CHECKPOINTS[currentCP];
   var dx = car.position.x - cp.x;
   var dz = car.position.z - cp.z;
@@ -242,12 +650,94 @@ function showWinScreen() {
     },
   ).join("  →  ");
   document.getElementById("win-screen").classList.add("show");
+  
+  // Show level-specific completion popup if not tutorial
+  showLevelCompletion();
+}
+
+function showLevelCompletion() {
+  // Hide win screen and show appropriate level completion popup
+  document.getElementById("win-screen").classList.remove("show");
+  
+  if (currentLevel === "level1") {
+    document.getElementById("level1-completion").classList.add("show");
+  } else if (currentLevel === "level2") {
+    document.getElementById("level2-completion").classList.add("show");
+  } else if (currentLevel === "level3") {
+    document.getElementById("level3-completion").classList.add("show");
+  }
 }
 
 function restartMission() {
   document.getElementById("win-screen").classList.remove("show");
+  document.getElementById("tutorial-completion").classList.remove("show");
+  document.getElementById("level1-completion").classList.remove("show");
+  document.getElementById("level2-completion").classList.remove("show");
+  document.getElementById("level3-completion").classList.remove("show");
+  document.getElementById("level-timeout").classList.remove("show");
+  
+  // Reset tutorial state when restarting (ensures fresh tutorial on restart)
+  tutorialActive = false;
+  tutorialStepIndex = 0;
+  tutorialStartTime = 0;
+  tutorialKeysPressed = {};
+  tutorialCompleted = false;
+  var notif = document.getElementById("tutorial-notification");
+  if (notif) {
+    notif.classList.remove("show");
+  }
+  
   resetCar();
   beginMission();
+}
+
+function switchLevel(newLevel) {
+  // Switch to a different level and restart mission
+  // Hide all completion popups
+  document.getElementById("tutorial-completion").classList.remove("show");
+  document.getElementById("level1-completion").classList.remove("show");
+  document.getElementById("level2-completion").classList.remove("show");
+  document.getElementById("level3-completion").classList.remove("show");
+  document.getElementById("win-screen").classList.remove("show");
+  document.getElementById("level-timeout").classList.remove("show");
+  
+  // Reset tutorial state — tutorial is only active in tutorial level
+  if (newLevel !== "tutorial") {
+    tutorialActive = false;
+    tutorialCompleted = false;
+    var notif = document.getElementById("tutorial-notification");
+    if (notif) {
+      notif.classList.remove("show");
+    }
+  }
+  
+  currentLevel = newLevel;
+  CHECKPOINTS = LEVELS[currentLevel];
+  currentEpisode = "euthymia"; // reset episode when switching levels
+  lockDepressiveEpisode = false; // reset developer lock
+  lockManicEpisode = false; // reset manic lock
+  visitedZones = {}; // reset discovered zones on minimap
+  discoveredRoads = {}; // reset discovered roads on minimap
+  exploredAreaCanvas = null; // reset explored area map
+  exploredAreaCtx = null;
+  resetCar();
+  beginMission();
+  buildCheckpointMarkers(); // Rebuild markers for new checkpoint positions
+  buildMissionSteps(); // Rebuild mission progress dots for checkpoint count
+  updateLevelDisplay();
+}
+
+function goToPreviousLevel() {
+  // Map each level to its previous level
+  var previousLevel = {
+    level1: "tutorial",
+    level2: "level1",
+    level3: "level2"
+  };
+  
+  if (previousLevel[currentLevel]) {
+    switchLevel(previousLevel[currentLevel]);
+  }
 }
 
 function freeRoam() {
@@ -293,6 +783,123 @@ function detectZone(x, z) {
   }
 }
 
+// ─── FISHEYE DISTORTION EFFECT ────────────────────────────────────────────────
+// Set up post-processing for barrel/fisheye distortion during depressive state
+function initFisheyeEffect() {
+  var width = window.innerWidth;
+  var height = window.innerHeight;
+  
+  // Create a render target to capture the main scene
+  fisheyeRenderTarget = new THREE.WebGLRenderTarget(width, height, {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat,
+  });
+  
+  // Create shader material for barrel distortion with chromatic aberration and sway
+  fisheyeMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: fisheyeRenderTarget.texture },
+      strength: { value: 0.0 }, // Controls intensity of distortion (0 to 1)
+      time: { value: 0.0 }, // Time for wobble/sway effects
+      chromaticStrength: { value: 0.0 }, // Chromatic aberration intensity (0 to 1)
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform float strength;
+      uniform float time;
+      uniform float chromaticStrength;
+      varying vec2 vUv;
+      
+      void main() {
+        vec2 center = vec2(0.5, 0.5);
+        vec2 delta = vUv - center;
+        float len = length(delta);
+        
+        // Apply exaggerated barrel/fisheye distortion
+        // Use a stronger quadratic distortion for more pronounced effect
+        float distortion = 1.0 + (len * len) * strength * 2.0;
+        vec2 distorted = center + (delta * distortion);
+        
+        // Add enhanced time-based sway/wobble effect (inspired by camera sway) - only for depressive // [1]
+        float wobble = sin(time * 2.0) * 0.12 * strength; // [1]
+        float wobble2 = sin(time * 1.3 + 1.57) * 0.12 * strength; // [1]
+        distorted += vec2(wobble, wobble2);
+        
+        // Chromatic aberration - separate color channels with slightly different distortions (for manic)
+        float chromaticAmount = chromaticStrength * 0.04;
+        vec2 redOffset = distorted + vec2(chromaticAmount, chromaticAmount * 0.5);
+        vec2 greenOffset = distorted;
+        vec2 blueOffset = distorted - vec2(chromaticAmount, chromaticAmount * 0.5);
+        
+        // Clamp all channels
+        redOffset = clamp(redOffset, 0.0, 1.0);
+        greenOffset = clamp(greenOffset, 0.0, 1.0);
+        blueOffset = clamp(blueOffset, 0.0, 1.0);
+        
+        // Sample each color channel separately
+        float r = texture2D(tDiffuse, redOffset).r;
+        float g = texture2D(tDiffuse, greenOffset).g;
+        float b = texture2D(tDiffuse, blueOffset).b;
+        
+        // Blend between chromatic and normal based on aberration strength
+        vec3 chromaticColor = vec3(r, g, b);
+        vec3 normalColor = texture2D(tDiffuse, clamp(distorted, 0.0, 1.0)).rgb;
+        vec3 sampleColor = mix(normalColor, chromaticColor, chromaticStrength);
+        
+        // Add enhanced vignetting (darkening at edges) - applies to both depressive and manic
+        float vignetteStrength = max(strength, chromaticStrength);
+        float vignette = 1.0 - (len * len * len) * vignetteStrength * 2.0;
+        vignette = clamp(vignette, 0.0, 1.0);
+        vec4 color = vec4(sampleColor, 1.0) * vignette;
+        
+        gl_FragColor = color;
+      }
+    `,
+  });
+  
+  // Create a fullscreen quad to apply the effect
+  var quadGeo = new THREE.PlaneGeometry(2, 2);
+  distortionQuad = new THREE.Mesh(quadGeo, fisheyeMaterial);
+  
+  // Create a separate scene for the distortion effect
+  distortionScene = new THREE.Scene();
+  distortionScene.add(distortionQuad);
+  
+  // Create an orthographic camera for the post-processing pass
+  distortionCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+  distortionCamera.position.z = 1;
+}
+
+// Render with optional fisheye distortion
+function renderWithEffects() {
+  // Update shader time uniform for wobble and sway effects
+  if (fisheyeMaterial && fisheyeMaterial.uniforms) {
+    fisheyeMaterial.uniforms.time.value += 0.016; // ~60fps
+  }
+  
+  // FISHEYE LENS EFFECT ENABLED (distortion for depressive, chromatic aberration for manic)
+  if ((currentEpisode === "depressive" || currentEpisode === "manic") && fisheyeRenderTarget && distortionScene && distortionQuad) {
+    // Render main scene to render target
+    renderer.setRenderTarget(fisheyeRenderTarget);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    
+    // Apply distortion/chromatic effect to screen using orthographic camera
+    renderer.render(distortionScene, distortionCamera);
+  } else {
+    // Normal render without distortion
+    renderer.render(scene, camera);
+  }
+}
+
 // ─── ENTRY POINT ──────────────────────────────────────────────────────────────
 // Called by the Start button in index.html
 function startGame() {
@@ -317,10 +924,10 @@ function init() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-  // Scene + fog for depth
+  // Scene
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb);
-  scene.fog = new THREE.Fog(0x87ceeb, 80, 220);
+  // Fog removed for better visibility
 
   // Camera
   camera = new THREE.PerspectiveCamera(
@@ -332,19 +939,19 @@ function init() {
   camera.position.set(0, 8, -14);
 
   // Lighting
-  var ambient = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambient);
-  var sun = new THREE.DirectionalLight(0xfffbe0, 1.2);
-  sun.position.set(80, 120, 60);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 400;
-  sun.shadow.camera.left = -180;
-  sun.shadow.camera.right = 180;
-  sun.shadow.camera.top = 180;
-  sun.shadow.camera.bottom = -180;
-  scene.add(sun);
+  ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+  sunLight = new THREE.DirectionalLight(0xfffbe0, 1.2);
+  sunLight.position.set(80, 120, 60);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.shadow.camera.near = 1;
+  sunLight.shadow.camera.far = 400;
+  sunLight.shadow.camera.left = -180;
+  sunLight.shadow.camera.right = 180;
+  sunLight.shadow.camera.top = 180;
+  sunLight.shadow.camera.bottom = -180;
+  scene.add(sunLight);
 
   // Build world zones
   buildGround();
@@ -359,11 +966,59 @@ function init() {
   buildCar();
   buildCheckpointMarkers();
   beginMission();
+  buildMissionSteps(); // Build progress dots for current level's checkpoints
+
+  // Post-processing
+  initFisheyeEffect();
 
   // Input
   window.addEventListener("keydown", function (e) {
     keys[e.code] = true;
     if (e.code === "KeyR") resetCar();
+    // Developer shortcut: backtick to cycle through levels (tutorial → level1 → level2 → level3 → tutorial)
+    if (e.code === "Backquote") {
+      var levelCycle = ["tutorial", "level1", "level2", "level3"];
+      var currentIndex = levelCycle.indexOf(currentLevel);
+      var nextIndex = (currentIndex + 1) % levelCycle.length;
+      switchLevel(levelCycle[nextIndex]);
+    }
+    // Developer shortcut: 1 to lock/unlock depressive episode
+    if (e.code === "Digit1") {
+      lockDepressiveEpisode = !lockDepressiveEpisode;
+      lockManicEpisode = false; // Disable manic lock if switching to depressive
+      if (lockDepressiveEpisode) {
+        currentEpisode = "depressive";
+        visitedZones = {}; // Clear zone discoveries when entering depressive episode
+        discoveredRoads = {}; // Clear road discoveries when entering depressive episode
+        // Initialize explored area canvas for developer lock
+        exploredAreaCanvas = document.createElement("canvas");
+        exploredAreaCanvas.width = 200;
+        exploredAreaCanvas.height = 200;
+        exploredAreaCtx = exploredAreaCanvas.getContext("2d");
+        exploredAreaCtx.fillStyle = "rgba(100, 140, 180, 0.5)"; // Blue-grey tint for visited areas
+        console.log("🔒 Depressive episode locked - visitedZones, discoveredRoads, and exploredAreaCanvas cleared");
+      } else {
+        currentEpisode = "euthymia";
+        console.log("🔓 Depressive episode unlocked - reset to euthymia");
+      }
+    }
+    // Developer shortcut: 2 to lock/unlock manic episode
+    if (e.code === "Digit2") {
+      lockManicEpisode = !lockManicEpisode;
+      lockDepressiveEpisode = false; // Disable depressive lock if switching to manic
+      if (lockManicEpisode) {
+        currentEpisode = "manic";
+        console.log("🔒 Manic episode locked");
+      } else {
+        currentEpisode = "euthymia";
+        console.log("🔓 Manic episode unlocked - reset to euthymia");
+      }
+    }
+    // Track tutorial key presses for WASD and Shift
+    if (tutorialActive && !tutorialCompleted) {
+      tutorialKeysPressed[e.code] = true;
+      checkTutorialKeyCompletion();
+    }
   });
   window.addEventListener("keyup", function (e) {
     keys[e.code] = false;
@@ -1247,6 +1902,15 @@ function resetCar() {
 }
 
 // ─── MINIMAP ──────────────────────────────────────────────────────────────────
+// Define zones for discovery tracking
+var MINIMAP_ZONES = [
+  { name: "Grassy Fields", x: -70, z: -70, w: 110, h: 110, color: "#1e3a1a" },
+  { name: "Rocky Hills", x: 25, z: -90, w: 95, h: 100, color: "#2a2218" },
+  { name: "Downtown", x: -20, z: -20, w: 80, h: 80, color: "#192233" },
+  { name: "Industrial District", x: -125, z: 15, w: 110, h: 110, color: "#221c10" },
+  { name: "Waterfront", x: 35, z: 20, w: 110, h: 110, color: "#112233" },
+];
+
 function drawMinimap() {
   var mc = document.getElementById("minimap-canvas");
   var ctx = mc.getContext("2d");
@@ -1265,87 +1929,321 @@ function drawMinimap() {
     return H / 2 - z * S;
   }
 
+  // Check which zone the car is currently in and mark as visited (if discovery is enabled)
+  var episodeConfig = null;
+  if (currentEpisode === "depressive") {
+    episodeConfig = DEPRESSIVE_EPISODE;
+  } else if (currentEpisode === "manic") {
+    episodeConfig = MANIC_EPISODE;
+  } else if (currentEpisode === "euthymia") {
+    episodeConfig = EUTHYMIA_EPISODE;
+  }
+  
+  // DEBUG: Log minimap rendering state (remove after testing)
+  if (missionActive && missionElapsed % 2 < 0.067) { // Log roughly every 2 seconds
+    console.log("📍 MINIMAP RENDER | currentEpisode: " + currentEpisode + " | episodeConfig: " + 
+      (episodeConfig ? episodeConfig.name : "null") + " | minimapDiscovery: " + 
+      (episodeConfig ? episodeConfig.minimapDiscovery : "N/A"));
+  }
+  
   // ── Background ──
-  ctx.fillStyle = "#111a11";
+  // During depressive episode with discovery: pure black background (foggy/blacked out)
+  // Otherwise: dark green
+  if (episodeConfig && episodeConfig.minimapDiscovery) {
+    ctx.fillStyle = "#000000"; // Pure black background during depressive discovery
+  } else {
+    ctx.fillStyle = "#111a11"; // Dark green for normal/manic
+  }
   ctx.fillRect(0, 0, W, H);
 
-  // ── Zone fills (flat coloured rectangles matching each zone's rough footprint) ──
-  var zones = [
-    { x: -70, z: -70, w: 110, h: 110, color: "#1e3a1a" }, // Grassy Fields NW
-    { x: 25, z: -90, w: 95, h: 100, color: "#2a2218" }, // Rocky Hills NE
-    { x: -20, z: -20, w: 80, h: 80, color: "#192233" }, // Downtown centre
-    { x: -125, z: 15, w: 110, h: 110, color: "#221c10" }, // Industrial SW
-    { x: 35, z: 20, w: 110, h: 110, color: "#112233" }, // Waterfront SE
-  ];
-  zones.forEach(function (z) {
-    ctx.fillStyle = z.color;
-    // With Z flipped, world top (z.z) maps to canvas bottom, so use wz(z.z + z.h) as canvas top
-    ctx.fillRect(wx(z.x), wz(z.z + z.h), z.w * S, z.h * S);
-  });
-
-  // ── Water patch (Waterfront) ──
-  ctx.fillStyle = "#1a3a4a";
-  ctx.fillRect(wx(55), wz(65 + 45), 70 * S, 45 * S);
-
-  // ── Map boundary box ──
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(wx(-100), wz(100), 200 * S, 200 * S);
-
-  // Helper: draw one road segment as a filled rect on the minimap
-  // Matches the road() call signature: centre x/z, width w, length len, rotation ry
-  function mroad(x, z, w, len, ry) {
-    ry = ry || 0;
-    ctx.save();
-    ctx.translate(wx(x), wz(z));
-    ctx.rotate(-ry);
-    // Main tarmac
-    ctx.fillStyle = "#3a3a3a";
-    ctx.fillRect((-len * S) / 2, (-w * S) / 2, len * S, w * S);
-    // Centre dash line
-    ctx.fillStyle = "rgba(220,210,120,0.35)";
-    ctx.fillRect((-len * S) / 2, -0.4, len * S, 0.8);
-    ctx.restore();
+  // ── DEPRESSIVE DISCOVERY MODE: Circular radius around player ──
+  var isDepressiveDiscovery = episodeConfig && episodeConfig.minimapDiscovery;
+  var visibilityRadius = 35; // World units - how far player can see on minimap in depressive mode
+  var playerWorldX = car.position.x;
+  var playerWorldZ = car.position.z;
+  
+  // Helper function to check if a point is visible from player
+  function isPointVisible(x, z) {
+    if (!isDepressiveDiscovery) return true; // Always visible in normal mode
+    var dx = x - playerWorldX;
+    var dz = z - playerWorldZ;
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    return dist < visibilityRadius;
+  }
+  
+  // Helper function to check if a zone's center is visible
+  function isZoneCenterVisible(z) {
+    return isPointVisible(z.x, z.z);
+  }
+  
+  // Helper function to convert hex color to rgba with alpha
+  function colorWithAlpha(hexColor, alpha) {
+    // Convert #RRGGBB to rgba
+    var r = parseInt(hexColor.slice(1, 3), 16);
+    var g = parseInt(hexColor.slice(3, 5), 16);
+    var b = parseInt(hexColor.slice(5, 7), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+  }
+  
+  // ── Draw explored areas (BEFORE clipping, as persistent background) ──
+  if (isDepressiveDiscovery && exploredAreaCanvas) {
+    ctx.globalAlpha = 0.2;
+    ctx.drawImage(exploredAreaCanvas, 0, 0);
+    ctx.globalAlpha = 1;
   }
 
-  // ── Draw every road — mirrors buildRoadNetwork exactly ──────────────
-  // Outer ring
-  mroad(0, -85, 9, 170, Math.PI / 2);
-  mroad(0, 85, 9, 170, Math.PI / 2);
-  mroad(-85, 0, 9, 170, 0);
-  mroad(85, 0, 9, 170, 0);
-  // Main cross
-  mroad(0, 0, 9, 170, 0);
-  mroad(0, 0, 9, 170, Math.PI / 2);
-  // Inner full-height grid
-  mroad(-42, 0, 7, 170, 0);
-  mroad(42, 0, 7, 170, 0);
-  mroad(0, -42, 7, 170, Math.PI / 2);
-  mroad(0, 42, 7, 170, Math.PI / 2);
-  // Mid-latitude E-W
-  mroad(0, -62, 7, 170, Math.PI / 2);
-  mroad(0, 62, 7, 170, Math.PI / 2);
-  // Mid-longitude N-S
-  mroad(-62, 0, 7, 170, 0);
-  mroad(62, 0, 7, 170, 0);
-  // Gas station spur
-  mroad(-75, 0, 8, 170, 0);
-  mroad(-73, 55, 7, 24, Math.PI / 2);
-  // Waterfront spur
-  mroad(80, 63, 7, 46, 0);
-  mroad(73, 70, 7, 22, Math.PI / 2);
-  // Downtown cross streets
-  mroad(-22, -21, 7, 42, 0);
-  mroad(22, -21, 7, 42, 0);
-  mroad(0, -25, 7, 84, Math.PI / 2);
-  // Diagonals
-  mroad(-21, -21, 7, 80, Math.PI / 4);
-  mroad(21, 21, 7, 80, Math.PI / 4);
-  mroad(21, -21, 7, 80, -Math.PI / 4);
-  mroad(-21, 21, 7, 80, -Math.PI / 4);
+  // ── Draw discovered zones and roads clipped to explored area (in depressive mode) ──
+  if (isDepressiveDiscovery && exploredAreaCanvas) {
+    // Create a temporary canvas for discovered items
+    var tempCanvas = document.createElement('canvas');
+    tempCanvas.width = mc.width;
+    tempCanvas.height = mc.height;
+    var tempCtx = tempCanvas.getContext('2d');
+    
+    // First, record any newly visible zones as discovered
+    MINIMAP_ZONES.forEach(function (z) {
+      if (isZoneCenterVisible(z)) {
+        visitedZones[z.name] = true; // Mark zone as discovered
+      }
+    });
+    
+    // Draw discovered zones to temp canvas
+    MINIMAP_ZONES.forEach(function (z) {
+      if (visitedZones[z.name]) {
+        var isCurrentlyVisible = isZoneCenterVisible(z);
+        if (!isCurrentlyVisible) { // Only draw if not currently visible
+          tempCtx.fillStyle = colorWithAlpha(z.color, 0.35);
+          tempCtx.fillRect(wx(z.x), wz(z.z + z.h), z.w * S, z.h * S);
+        }
+      }
+    });
+    
+    // Draw discovered roads to temp canvas
+    var roadDefs = [
+      [0, -85, 9, 170, Math.PI / 2],
+      [0, 85, 9, 170, Math.PI / 2],
+      [-85, 0, 9, 170, 0],
+      [85, 0, 9, 170, 0],
+      [0, 0, 9, 170, 0],
+      [0, 0, 9, 170, Math.PI / 2],
+      [-42, 0, 7, 170, 0],
+      [42, 0, 7, 170, 0],
+      [0, -42, 7, 170, Math.PI / 2],
+      [0, 42, 7, 170, Math.PI / 2],
+      [0, -62, 7, 170, Math.PI / 2],
+      [0, 62, 7, 170, Math.PI / 2],
+      [-62, 0, 7, 170, 0],
+      [62, 0, 7, 170, 0],
+      [-75, 0, 8, 170, 0],
+      [-73, 55, 7, 24, Math.PI / 2],
+      [80, 63, 7, 46, 0],
+      [73, 70, 7, 22, Math.PI / 2],
+      [-22, -21, 7, 42, 0],
+      [22, -21, 7, 42, 0],
+      [0, -25, 7, 84, Math.PI / 2],
+      [-21, -21, 7, 80, Math.PI / 4],
+      [21, 21, 7, 80, Math.PI / 4],
+      [21, -21, 7, 80, -Math.PI / 4],
+      [-21, 21, 7, 80, -Math.PI / 4]
+    ];
+    
+    // Helper function to draw a road on temp canvas
+    function drawRoadToTemp(x, z, w, len, ry, opacity) {
+      opacity = opacity || 1;
+      ry = ry || 0;
+      tempCtx.save();
+      tempCtx.globalAlpha = opacity;
+      tempCtx.translate(wx(x), wz(z));
+      tempCtx.rotate(-ry);
+      tempCtx.fillStyle = "#3a3a3a";
+      tempCtx.fillRect((-len * S) / 2, (-w * S) / 2, len * S, w * S);
+      tempCtx.fillStyle = "rgba(220,210,120,0.35)";
+      tempCtx.fillRect((-len * S) / 2, -0.4, len * S, 0.8);
+      tempCtx.restore();
+    }
+    
+    // Draw discovered roads to temp canvas
+    for (var i = 0; i < roadDefs.length; i++) {
+      var rd = roadDefs[i];
+      var roadKey = rd[0] + "," + rd[1];
+      var isCurrentlyVisible = isPointVisible(rd[0], rd[1]);
+      
+      // Record road as discovered if currently visible
+      if (isCurrentlyVisible) {
+        discoveredRoads[roadKey] = true;
+      }
+      
+      // Draw discovered but not visible to temp canvas
+      if (discoveredRoads[roadKey] && !isCurrentlyVisible) {
+        drawRoadToTemp(rd[0], rd[1], rd[2], rd[3], rd[4], 0.35);
+      }
+    }
+    
+    // Now composite the temp canvas with exploredAreaCanvas to clip it
+    tempCtx.globalCompositeOperation = 'destination-in';
+    tempCtx.drawImage(exploredAreaCanvas, 0, 0);
+    
+    // Draw the clipped temp canvas to main canvas
+    ctx.drawImage(tempCanvas, 0, 0);
+  } else {
+    // Normal mode: draw all zones
+    MINIMAP_ZONES.forEach(function (z) {
+      ctx.fillStyle = z.color;
+      ctx.fillRect(wx(z.x), wz(z.z + z.h), z.w * S, z.h * S);
+    });
+  }
 
-  // ── Active checkpoint marker — pulsing ring ──
-  if (missionActive && !missionComplete) {
+  // ── APPLY CLIPPING CIRCLE in depressive mode ──
+  if (isDepressiveDiscovery) {
+    ctx.save();
+    var circleRadius = visibilityRadius * S;
+    ctx.beginPath();
+    ctx.arc(wx(playerWorldX), wz(playerWorldZ), circleRadius, 0, Math.PI * 2);
+    ctx.clip();
+  }
+
+  // ── Water patch (Waterfront) ──
+  if (isPointVisible(55, 65)) {
+    ctx.fillStyle = "#1a3a4a";
+    ctx.fillRect(wx(55), wz(65 + 45), 70 * S, 45 * S);
+  }
+
+  // ── Draw currently visible zones at FULL brightness (inside clipping) ──
+  if (isDepressiveDiscovery) {
+    MINIMAP_ZONES.forEach(function (z) {
+      if (isZoneCenterVisible(z)) {
+        ctx.fillStyle = z.color;
+        ctx.fillRect(wx(z.x), wz(z.z + z.h), z.w * S, z.h * S);
+      }
+    });
+  }
+
+  // ── ROAD RENDERING ──
+  if (!isDepressiveDiscovery) {
+    // Normal/Manic mode: draw all roads
+    function mroad(x, z, w, len, ry) {
+      ry = ry || 0;
+      ctx.save();
+      ctx.translate(wx(x), wz(z));
+      ctx.rotate(-ry);
+      ctx.fillStyle = "#3a3a3a";
+      ctx.fillRect((-len * S) / 2, (-w * S) / 2, len * S, w * S);
+      ctx.fillStyle = "rgba(220,210,120,0.35)";
+      ctx.fillRect((-len * S) / 2, -0.4, len * S, 0.8);
+      ctx.restore();
+    }
+
+    // ── Draw every road ──
+    mroad(0, -85, 9, 170, Math.PI / 2);
+    mroad(0, 85, 9, 170, Math.PI / 2);
+    mroad(-85, 0, 9, 170, 0);
+    mroad(85, 0, 9, 170, 0);
+    mroad(0, 0, 9, 170, 0);
+    mroad(0, 0, 9, 170, Math.PI / 2);
+    mroad(-42, 0, 7, 170, 0);
+    mroad(42, 0, 7, 170, 0);
+    mroad(0, -42, 7, 170, Math.PI / 2);
+    mroad(0, 42, 7, 170, Math.PI / 2);
+    mroad(0, -62, 7, 170, Math.PI / 2);
+    mroad(0, 62, 7, 170, Math.PI / 2);
+    mroad(-62, 0, 7, 170, 0);
+    mroad(62, 0, 7, 170, 0);
+    mroad(-75, 0, 8, 170, 0);
+    mroad(-73, 55, 7, 24, Math.PI / 2);
+    mroad(80, 63, 7, 46, 0);
+    mroad(73, 70, 7, 22, Math.PI / 2);
+    mroad(-22, -21, 7, 42, 0);
+    mroad(22, -21, 7, 42, 0);
+    mroad(0, -25, 7, 84, Math.PI / 2);
+    mroad(-21, -21, 7, 80, Math.PI / 4);
+    mroad(21, 21, 7, 80, Math.PI / 4);
+    mroad(21, -21, 7, 80, -Math.PI / 4);
+    mroad(-21, 21, 7, 80, -Math.PI / 4);
+  } else {
+    // Depressive mode: draw currently visible roads at FULL opacity (inside clipping)
+    var roadDefs = [
+      [0, -85, 9, 170, Math.PI / 2],
+      [0, 85, 9, 170, Math.PI / 2],
+      [-85, 0, 9, 170, 0],
+      [85, 0, 9, 170, 0],
+      [0, 0, 9, 170, 0],
+      [0, 0, 9, 170, Math.PI / 2],
+      [-42, 0, 7, 170, 0],
+      [42, 0, 7, 170, 0],
+      [0, -42, 7, 170, Math.PI / 2],
+      [0, 42, 7, 170, Math.PI / 2],
+      [0, -62, 7, 170, Math.PI / 2],
+      [0, 62, 7, 170, Math.PI / 2],
+      [-62, 0, 7, 170, 0],
+      [62, 0, 7, 170, 0],
+      [-75, 0, 8, 170, 0],
+      [-73, 55, 7, 24, Math.PI / 2],
+      [80, 63, 7, 46, 0],
+      [73, 70, 7, 22, Math.PI / 2],
+      [-22, -21, 7, 42, 0],
+      [22, -21, 7, 42, 0],
+      [0, -25, 7, 84, Math.PI / 2],
+      [-21, -21, 7, 80, Math.PI / 4],
+      [21, 21, 7, 80, Math.PI / 4],
+      [21, -21, 7, 80, -Math.PI / 4],
+      [-21, 21, 7, 80, -Math.PI / 4]
+    ];
+    
+    // Function to draw a road at given position
+    function drawRoad(x, z, w, len, ry, opacity) {
+      opacity = opacity || 1;
+      ry = ry || 0;
+      ctx.save();
+      ctx.globalAlpha = opacity;
+      ctx.translate(wx(x), wz(z));
+      ctx.rotate(-ry);
+      ctx.fillStyle = "#3a3a3a";
+      ctx.fillRect((-len * S) / 2, (-w * S) / 2, len * S, w * S);
+      ctx.fillStyle = "rgba(220,210,120,0.35)";
+      ctx.fillRect((-len * S) / 2, -0.4, len * S, 0.8);
+      ctx.restore();
+    }
+    
+    // Draw currently visible roads at full opacity (inside clipping)
+    for (var i = 0; i < roadDefs.length; i++) {
+      var rd = roadDefs[i];
+      if (isPointVisible(rd[0], rd[1])) {
+        drawRoad(rd[0], rd[1], rd[2], rd[3], rd[4], 1);
+      }
+    }
+  }
+
+  // ── Map boundary box (only in normal mode) ──
+  if (!isDepressiveDiscovery) {
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(wx(-100), wz(100), 200 * S, 200 * S);
+  }
+
+  // ── Restore clipping and draw visibility circle (only in depressive mode) ──
+  if (isDepressiveDiscovery) {
+    ctx.restore(); // Restore from clipping
+    var circleRadius = visibilityRadius * S;
+    
+    // Draw circle outline showing visible area
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(wx(playerWorldX), wz(playerWorldZ), circleRadius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Track explored areas: fill circle on the explored area canvas (after clipping is done)
+  if (isDepressiveDiscovery && exploredAreaCanvas && exploredAreaCtx) {
+    var circleRadius = visibilityRadius * S;
+    exploredAreaCtx.beginPath();
+    exploredAreaCtx.arc(wx(playerWorldX), wz(playerWorldZ), circleRadius, 0, Math.PI * 2);
+    exploredAreaCtx.fill();
+  }
+
+  // ── Active checkpoint marker — pulsing ring (visibility based on episode config) ──
+  var showCheckpoints = (!episodeConfig || episodeConfig.showCheckpoints !== false) && currentLevel !== "tutorial";
+  if (missionActive && !missionComplete && showCheckpoints) {
     var cp = CHECKPOINTS[currentCP];
     var pulse = 0.55 + 0.45 * Math.abs(Math.sin(Date.now() * 0.003));
     ctx.beginPath();
@@ -1367,13 +2265,16 @@ function drawMinimap() {
     ctx.fillText(String.fromCharCode(65 + currentCP), wx(cp.x), wz(cp.z));
   }
 
-  // ── Collected checkpoint tick marks ──
-  for (var ci = 0; ci < currentCP; ci++) {
-    var dcp = CHECKPOINTS[ci];
-    ctx.beginPath();
-    ctx.arc(wx(dcp.x), wz(dcp.z), 3, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(126,245,168,0.3)";
-    ctx.fill();
+  // ── Collected checkpoint tick marks (visibility based on episode config) ──
+  // Don't show collected checkpoints during tutorial either
+  if (showCheckpoints && currentLevel !== "tutorial") {
+    for (var ci = 0; ci < currentCP; ci++) {
+      var dcp = CHECKPOINTS[ci];
+      ctx.beginPath();
+      ctx.arc(wx(dcp.x), wz(dcp.z), 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(126,245,168,0.3)";
+      ctx.fill();
+    }
   }
 
   // ── Player arrow ──
@@ -1401,20 +2302,39 @@ function drawMinimap() {
   ctx.restore();
 
   // ── Cardinal labels ──
-  ctx.fillStyle = "rgba(255,255,255,0.25)";
-  ctx.font = "7px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("N", W / 2, 7);
-  ctx.fillText("S", W / 2, H - 7);
-  ctx.fillText("W", 7, H / 2);
-  ctx.fillText("E", W - 7, H / 2);
+  // Only drawn during normal episodes, completely hidden during depressive discovery fog
+  if (!isDepressiveDiscovery) {
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.font = "7px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("N", W / 2, 7);
+    ctx.fillText("S", W / 2, H - 7);
+    ctx.fillText("W", 7, H / 2);
+    ctx.fillText("E", W - 7, H / 2);
+  }
 }
 
 // ─── CAR PHYSICS ──────────────────────────────────────────────────────────────
 function updateCar(dt) {
   var boost = keys["ShiftLeft"] || keys["ShiftRight"];
   var maxSpeed = boost ? 0.55 : 0.32;
+  
+  // During depressive episode, significantly reduce car speed
+  // Apply episode-specific speed multiplier
+  var episodeConfig = null;
+  if (currentEpisode === "depressive") {
+    episodeConfig = DEPRESSIVE_EPISODE;
+  } else if (currentEpisode === "manic") {
+    episodeConfig = MANIC_EPISODE;
+  } else if (currentEpisode === "euthymia") {
+    episodeConfig = EUTHYMIA_EPISODE;
+  }
+  
+  if (episodeConfig && episodeConfig.carSpeedMultiplier) {
+    maxSpeed *= episodeConfig.carSpeedMultiplier;
+  }
+  
   var accel = 0.018;
   var brakeForce = 0.025;
   var friction = 0.012;
@@ -1465,7 +2385,98 @@ function updateCamera() {
   offset.applyQuaternion(car.quaternion);
   var target = car.position.clone().add(offset);
   camera.position.lerp(target, 0.07); // smooth follow with slight lag
+  
+  // Add camera shake during episodes
+  if (fisheyeMaterial && fisheyeMaterial.uniforms) {
+    var time = fisheyeMaterial.uniforms.time.value;
+    
+    // Get episode configuration
+    var episodeConfig = null;
+    if (currentEpisode === "depressive") {
+      episodeConfig = DEPRESSIVE_EPISODE;
+    } else if (currentEpisode === "manic") {
+      episodeConfig = MANIC_EPISODE;
+    } else if (currentEpisode === "euthymia") {
+      episodeConfig = EUTHYMIA_EPISODE;
+    }
+    
+    if (episodeConfig && episodeConfig.cameraShakeStrength > 0) {
+      var shakeStrength = episodeConfig.cameraShakeStrength;
+      var freqs = episodeConfig.cameraShakeFrequencies;
+      
+      // Apply sinusoidal camera shake based on episode configuration // [1]
+      camera.position.x += Math.sin(time * freqs.x) * shakeStrength; // [1]
+      camera.position.y += Math.sin(time * freqs.y + 0.5) * shakeStrength; // [1]
+      camera.position.z += Math.sin(time * freqs.z + 1.0) * shakeStrength; // [1]
+    }
+  }
+  
   camera.lookAt(car.position.clone().add(new THREE.Vector3(0, 1.2, 0)));
+}
+
+// ─── EPISODE EFFECTS ──────────────────────────────────────────────────────────
+// Update visual and camera effects based on current episode
+function updateEpisodeEffects() {
+  // Default values for euthymia (normal state)
+  var targetFOV = 75;
+  var targetSkyColor = 0x87ceeb;
+  var targetDistortion = 0;
+  var targetChromaticStrength = 0;
+  var targetAmbientIntensity = 0.6;
+  
+  // Use episode configuration files
+  var episodeConfig = null;
+  if (currentEpisode === "depressive") {
+    episodeConfig = DEPRESSIVE_EPISODE;
+  } else if (currentEpisode === "manic") {
+    episodeConfig = MANIC_EPISODE;
+  } else if (currentEpisode === "euthymia") {
+    episodeConfig = EUTHYMIA_EPISODE;
+  }
+  
+  // Apply episode-specific parameters if available
+  if (episodeConfig) {
+    targetFOV = episodeConfig.fov;
+    targetSkyColor = episodeConfig.skyColor;
+    targetDistortion = episodeConfig.distortion;
+    targetChromaticStrength = episodeConfig.chromaticStrength;
+    targetAmbientIntensity = episodeConfig.ambientIntensity;
+  }
+  
+  // Smoothly transition the sky color
+  if (scene.background) {
+    var currentColor = scene.background;
+    var targetColor = new THREE.Color(targetSkyColor);
+    currentColor.lerp(targetColor, 0.05); // smooth transition
+  }
+  
+  // Smoothly transition the camera FOV
+  if (camera && Math.abs(camera.fov - targetFOV) > 0.1) {
+    camera.fov += (targetFOV - camera.fov) * 0.05;
+    camera.updateProjectionMatrix();
+  }
+  
+  // Adjust ambient light intensity during episodes
+  if (ambientLight) {
+    ambientLight.intensity += (targetAmbientIntensity - ambientLight.intensity) * 0.05;
+  }
+  
+  // Update fisheye distortion strength and chromatic aberration
+  if (fisheyeMaterial && fisheyeMaterial.uniforms) {
+    var currentStrength = fisheyeMaterial.uniforms.strength.value;
+    fisheyeMaterial.uniforms.strength.value += (targetDistortion - currentStrength) * 0.1;
+    
+    var currentChromaticStrength = fisheyeMaterial.uniforms.chromaticStrength.value;
+    fisheyeMaterial.uniforms.chromaticStrength.value += (targetChromaticStrength - currentChromaticStrength) * 0.1;
+    
+    // Reset shader time when leaving depressive episode for clean transitions
+    if (currentEpisode !== "depressive" && currentStrength > 0.01) {
+      // Shader is active but shouldn't be, no reset needed yet - it will fade out
+    } else if (currentEpisode !== "depressive" && currentStrength < 0.01) {
+      // Fully transitioned out, reset time for next depressive episode
+      fisheyeMaterial.uniforms.time.value = 0.0;
+    }
+  }
 }
 
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
@@ -1475,15 +2486,46 @@ function animate() {
   var dt = clock.getDelta();
   updateCar(dt);
   updateCamera();
+  updateLevel1Episodes(); // Update unpredictable episodes for Level 1
+  updateEpisodeEffects();
   updateMarkers(dt);
   updateMissionHUD();
   checkCheckpoints();
   drawMinimap();
-  renderer.render(scene, camera);
+  
+  // Rotate minimap based on episode configuration
+  var minimapElement = document.getElementById("minimap");
+  if (minimapElement) {
+    var episodeConfig = null;
+    if (currentEpisode === "depressive") {
+      episodeConfig = DEPRESSIVE_EPISODE;
+    } else if (currentEpisode === "manic") {
+      episodeConfig = MANIC_EPISODE;
+    } else if (currentEpisode === "euthymia") {
+      episodeConfig = EUTHYMIA_EPISODE;
+    }
+    
+    if (episodeConfig && episodeConfig.minimapRotation) {
+      // Apply rotation speed from episode config
+      var rotationSpeed = episodeConfig.rotationSpeed || 0.06;
+      var rotation = (Date.now() * rotationSpeed) % 360;
+      minimapElement.style.transform = "rotate(" + rotation + "deg)";
+    } else {
+      // No rotation for other episodes
+      minimapElement.style.transform = "rotate(0deg)";
+    }
+  }
+  
+  renderWithEffects();
 }
 
 function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  
+  // Resize post-processing render target
+  if (fisheyeRenderTarget) {
+    fisheyeRenderTarget.setSize(window.innerWidth, window.innerHeight);
+  }
 }

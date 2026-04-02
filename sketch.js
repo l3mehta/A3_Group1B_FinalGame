@@ -64,6 +64,7 @@ var CAR_HD = 2.1;
 // Two-pass separating-axis push-out. The second pass catches adjacent-collider
 // corner cases that a single pass would miss.
 function resolveCollisions() {
+  var collisionOccurred = false;
   for (var pass = 0; pass < 2; pass++) {
     for (var i = 0; i < colliders.length; i++) {
       var c = colliders[i];
@@ -79,8 +80,19 @@ function resolveCollisions() {
           car.position.z += overlapZ * (dz >= 0 ? 1 : -1);
         }
         carVelocity *= 0.2; // bleed speed on impact
+        collisionOccurred = true;
       }
     }
+  }
+  
+  // STATE TOGGLE: Only play sound when transitioning FROM "not colliding" TO "colliding"
+  if (collisionOccurred && !isCurrentlyColliding) {
+    // Collision JUST started
+    playBumpSound();
+    isCurrentlyColliding = true;
+  } else if (!collisionOccurred && isCurrentlyColliding) {
+    // Collision JUST ended
+    isCurrentlyColliding = false;
   }
 }
 
@@ -119,6 +131,28 @@ let level1CurrentEpisodeIndex = 0; // Track which episode in the schedule we're 
 let level2EpisodeSchedule = []; // Array of manic episode start times for the level
 let level2EpisodeDurations = []; // Array of manic episode durations (randomized for each episode)
 let level2CurrentEpisodeIndex = 0; // Track which manic episode in the schedule we're on
+
+// Level 3 unpredictable mixed episode system (depressive + manic)
+let level3DepressiveSchedule = []; // Array of depressive episode start times for level 3
+let level3DepressiveDurations = []; // Array of depressive episode durations
+let level3DepressiveIndex = 0; // Track current depressive episode
+let level3ManicSchedule = []; // Array of manic episode start times for level 3
+let level3ManicDurations = []; // Array of manic episode durations
+let level3ManicIndex = 0; // Track current manic episode
+
+// ─── PAUSE SYSTEM ─────────────────────────────────────────────────────────────
+let gamePaused = false;
+let pausedTime = 0; // Timestamp when pause began
+
+// ─── SOUND SYSTEM ─────────────────────────────────────────────────────────────
+let backgroundMusic = null;
+let bumpSound = null;
+let engineSound = null;
+let gameoverSound = null;
+let winSound = null;
+let menuSound = null;
+let isCurrentlyColliding = false; // State toggle: only play sound on collision START, not every frame
+let lastEngineBoostPressed = false; // Track if shift was pressed last frame
 
 // ─── MINIMAP DISCOVERY SYSTEM ──────────────────────────────────────────────────
 // Tracks which zones have been visited during depressive episode
@@ -232,6 +266,7 @@ function showNextTutorialStep() {
       currentEpisode = "manic";
     }
     episodeStartTime = Date.now();
+    updateMusicSpeed(); // Update music speed for new episode
   }
 
   if (step.type === "glow-mission") {
@@ -468,6 +503,100 @@ function generateLevel2EpisodeSchedule() {
   );
 }
 
+// Generate unpredictable mixed episode schedule for Level 3
+// Randomly distributes depressive and manic episodes throughout the 60-second level
+function generateLevel3EpisodeSchedule() {
+  level3DepressiveSchedule = [];
+  level3DepressiveDurations = [];
+  level3DepressiveIndex = 0;
+  level3ManicSchedule = [];
+  level3ManicDurations = [];
+  level3ManicIndex = 0;
+
+  // Only generate schedule for Level 3
+  if (currentLevel !== "level3") return;
+
+  var levelConfig = LEVEL3;
+  var depressiveCount = levelConfig.depressiveEpisodeCount || 2;
+  var manicCount = levelConfig.manicEpisodeCount || 2;
+  var depressiveDurationMin = levelConfig.depressiveEpisodeDurationMin || 2000;
+  var depressiveDurationMax = levelConfig.depressiveEpisodeDurationMax || 6000;
+  var manicDurationMin = levelConfig.manicEpisodeDurationMin || 7000;
+  var manicDurationMax = levelConfig.manicEpisodeDurationMax || 12000;
+  var levelDuration = 60000; // 60 seconds in milliseconds for Level 3
+  var maxGapBetweenEpisodes = 3000;
+  var minGapBetweenEpisodes = 0.5 * 1000;
+
+  // Generate random durations for depressive episodes
+  for (var i = 0; i < depressiveCount; i++) {
+    var randomDuration =
+      depressiveDurationMin +
+      Math.random() * (depressiveDurationMax - depressiveDurationMin);
+    level3DepressiveDurations.push(randomDuration);
+  }
+
+  // Generate random durations for manic episodes
+  for (var i = 0; i < manicCount; i++) {
+    var randomDuration =
+      manicDurationMin +
+      Math.random() * (manicDurationMax - manicDurationMin);
+    level3ManicDurations.push(randomDuration);
+  }
+
+  // Schedule depressive episodes
+  var currentTime = 1 * 1000; // Start first depressive at 1 second
+  for (var i = 0; i < depressiveCount; i++) {
+    level3DepressiveSchedule.push(currentTime);
+    currentTime += level3DepressiveDurations[i];
+    if (i < depressiveCount - 1) {
+      var randomGap =
+        minGapBetweenEpisodes +
+        Math.random() * (maxGapBetweenEpisodes - minGapBetweenEpisodes);
+      currentTime += randomGap;
+    }
+  }
+
+  // Schedule manic episodes in remaining space
+  var manicStartTime = 25 * 1000; // Start first manic at 25 seconds
+  for (var i = 0; i < manicCount; i++) {
+    level3ManicSchedule.push(manicStartTime);
+    manicStartTime += level3ManicDurations[i];
+    if (i < manicCount - 1) {
+      var randomGap =
+        minGapBetweenEpisodes +
+        Math.random() * (maxGapBetweenEpisodes - minGapBetweenEpisodes);
+      manicStartTime += randomGap;
+    }
+  }
+
+  console.log(
+    "Level 3 Depressive Episodes:",
+    level3DepressiveSchedule
+      .map(function (t, i) {
+        return (
+          (t / 1000).toFixed(1) +
+          "s (duration: " +
+          (level3DepressiveDurations[i] / 1000).toFixed(1) +
+          "s)"
+        );
+      })
+      .join(", "),
+  );
+  console.log(
+    "Level 3 Manic Episodes:",
+    level3ManicSchedule
+      .map(function (t, i) {
+        return (
+          (t / 1000).toFixed(1) +
+          "s (duration: " +
+          (level3ManicDurations[i] / 1000).toFixed(1) +
+          "s)"
+        );
+      })
+      .join(", "),
+  );
+}
+
 // Update episode state for Level 1 - manages unpredictable episode transitions
 function updateLevel1Episodes() {
   if (currentLevel !== "level1" || !missionActive || missionComplete) return;
@@ -513,6 +642,7 @@ function updateLevel1Episodes() {
         );
         currentEpisode = "depressive";
         episodeStartTime = Date.now();
+        updateMusicSpeed(); // Update music speed for depressive episode
 
         // Initialize explored area canvas for fog-of-war discovery
         visitedZones = {}; // Clear zone discoveries
@@ -537,6 +667,7 @@ function updateLevel1Episodes() {
       );
       level1CurrentEpisodeIndex++;
       currentEpisode = "euthymia";
+      updateMusicSpeed(); // Update music speed back to normal
       // Reset fog-of-war for normal mode
       exploredAreaCanvas = null;
       exploredAreaCtx = null;
@@ -592,6 +723,7 @@ function updateLevel2Episodes() {
         );
         currentEpisode = "manic";
         episodeStartTime = Date.now();
+        updateMusicSpeed(); // Update music speed for manic episode
 
         // Apply warm sky color and building tints immediately
         scene.background = new THREE.Color(0xffdd44); // Warm yellow
@@ -610,13 +742,149 @@ function updateLevel2Episodes() {
       );
       level2CurrentEpisodeIndex++;
       currentEpisode = "euthymia";
+      updateMusicSpeed(); // Update music speed back to normal
       // Reset sky to normal blue
       scene.background = new THREE.Color(0x87ceeb);
     }
   } else {
     // All episodes are done, return to euthymia
     currentEpisode = "euthymia";
+    updateMusicSpeed();
     scene.background = new THREE.Color(0x87ceeb);
+  }
+}
+
+// Update episode state for Level 3 - manages unpredictable mixed episode transitions
+function updateLevel3Episodes() {
+  if (currentLevel !== "level3" || !missionActive || missionComplete) return;
+  if (lockDepressiveEpisode || lockManicEpisode) return; // Skip if developer locked
+
+  var missionElapsedMs = missionElapsed * 1000;
+
+  // Check if we should start the next depressive episode
+  if (level3DepressiveIndex < level3DepressiveSchedule.length) {
+    var nextDepStart = level3DepressiveSchedule[level3DepressiveIndex];
+    var nextDepDuration = level3DepressiveDurations[level3DepressiveIndex];
+    var nextDepEnd = nextDepStart + nextDepDuration;
+
+    if (
+      missionElapsedMs >= nextDepStart &&
+      missionElapsedMs < nextDepEnd
+    ) {
+      // We're within a depressive episode
+      if (currentEpisode !== "depressive") {
+        console.log(
+          "🔴 ENTERING DEPRESSIVE EPISODE " +
+            level3DepressiveIndex +
+            " at time " +
+            (missionElapsedMs / 1000).toFixed(1) +
+            "s",
+        );
+        currentEpisode = "depressive";
+        episodeStartTime = Date.now();
+        updateMusicSpeed(); // Update music speed for depressive episode
+
+        // Initialize explored area canvas
+        visitedZones = {};
+        discoveredRoads = {};
+        exploredAreaCanvas = document.createElement("canvas");
+        exploredAreaCanvas.width = 200;
+        exploredAreaCanvas.height = 200;
+        exploredAreaCtx = exploredAreaCanvas.getContext("2d");
+        exploredAreaCtx.fillStyle = "rgba(100, 140, 180, 0.5)";
+      }
+    } else if (missionElapsedMs >= nextDepEnd && currentEpisode === "depressive") {
+      // Exit depressive episode
+      console.log(
+        "🟢 EXITING DEPRESSIVE EPISODE " +
+          level3DepressiveIndex +
+          " at time " +
+          (missionElapsedMs / 1000).toFixed(1) +
+          "s",
+      );
+      level3DepressiveIndex++;
+      // Check if manic episode is active, otherwise go to euthymia
+      var manicActive = false;
+      if (level3ManicIndex < level3ManicSchedule.length) {
+        var manicStart = level3ManicSchedule[level3ManicIndex];
+        var manicDuration = level3ManicDurations[level3ManicIndex];
+        var manicEnd = manicStart + manicDuration;
+        if (missionElapsedMs >= manicStart && missionElapsedMs < manicEnd) {
+          manicActive = true;
+        }
+      }
+      if (!manicActive) {
+        currentEpisode = "euthymia";
+        updateMusicSpeed(); // Update music speed back to normal
+        exploredAreaCanvas = null;
+        exploredAreaCtx = null;
+      }
+    }
+  }
+
+  // Check if we should start the next manic episode
+  if (level3ManicIndex < level3ManicSchedule.length) {
+    var nextManicStart = level3ManicSchedule[level3ManicIndex];
+    var nextManicDuration = level3ManicDurations[level3ManicIndex];
+    var nextManicEnd = nextManicStart + nextManicDuration;
+
+    if (
+      missionElapsedMs >= nextManicStart &&
+      missionElapsedMs < nextManicEnd
+    ) {
+      // We're within a manic episode
+      if (currentEpisode !== "manic") {
+        console.log(
+          "🟡 ENTERING MANIC EPISODE " +
+            level3ManicIndex +
+            " at time " +
+            (missionElapsedMs / 1000).toFixed(1) +
+            "s",
+        );
+        currentEpisode = "manic";
+        episodeStartTime = Date.now();
+        updateMusicSpeed(); // Update music speed for manic episode
+        scene.background = new THREE.Color(0xffdd44); // Warm yellow
+      }
+    } else if (missionElapsedMs >= nextManicEnd && currentEpisode === "manic") {
+      // Exit manic episode
+      console.log(
+        "🔵 EXITING MANIC EPISODE " +
+          level3ManicIndex +
+          " at time " +
+          (missionElapsedMs / 1000).toFixed(1) +
+          "s",
+      );
+      level3ManicIndex++;
+      // Check if depressive episode is active, otherwise go to euthymia
+      var depActive = false;
+      if (level3DepressiveIndex < level3DepressiveSchedule.length) {
+        var depStart = level3DepressiveSchedule[level3DepressiveIndex];
+        var depDuration = level3DepressiveDurations[level3DepressiveIndex];
+        var depEnd = depStart + depDuration;
+        if (missionElapsedMs >= depStart && missionElapsedMs < depEnd) {
+          depActive = true;
+        }
+      }
+      if (!depActive) {
+        currentEpisode = "euthymia";
+        updateMusicSpeed(); // Update music speed back to normal
+        scene.background = new THREE.Color(0x87ceeb); // Reset to blue
+      }
+    }
+  }
+
+  // If all episodes are done, return to euthymia
+  if (
+    level3DepressiveIndex >= level3DepressiveSchedule.length &&
+    level3ManicIndex >= level3ManicSchedule.length &&
+    currentEpisode !== "euthymia"
+  ) {
+    currentEpisode = "euthymia";
+    updateMusicSpeed();
+    scene.background = new THREE.Color(0x87ceeb);
+    exploredAreaCanvas = null;
+    exploredAreaCtx = null;
   }
 }
 
@@ -717,6 +985,7 @@ function beginMission() {
   missionStart = Date.now();
   missionElapsed = 0;
   missionTimeoutShown = false; // reset timeout flag for new mission
+  gamePaused = false; // Reset pause state
   updateMissionHUD();
 
   // Reset progress dots in the HUD
@@ -747,25 +1016,297 @@ function beginMission() {
   if (currentLevel === "level2") {
     generateLevel2EpisodeSchedule();
   }
+
+  // Generate mixed episode schedule if in level 3
+  if (currentLevel === "level3") {
+    generateLevel3EpisodeSchedule();
+  }
 }
 
-// Format a seconds value as "m:ss"
+// Initialize audio elements
+function initAudio() {
+  backgroundMusic = document.getElementById("background-music");
+  bumpSound = document.getElementById("bump-sound");
+  engineSound = document.getElementById("engine-sound");
+  gameoverSound = document.getElementById("gameover-sound");
+  winSound = document.getElementById("win-sound");
+  menuSound = document.getElementById("menu-sound");
+  
+  // Debug: Log audio element status
+  console.log("🔊 Audio System Initialized:");
+  console.log("   Background Music:", backgroundMusic ? "✓ Found" : "✗ Not found");
+  console.log("   Bump Sound:", bumpSound ? "✓ Found" : "✗ Not found");
+  console.log("   Engine Sound:", engineSound ? "✓ Found" : "✗ Not found");
+  console.log("   Gameover Sound:", gameoverSound ? "✓ Found" : "✗ Not found");
+  console.log("   Win Sound:", winSound ? "✓ Found" : "✗ Not found");
+  console.log("   Menu Sound:", menuSound ? "✓ Found" : "✗ Not found");
+  
+  // Set reasonable volume levels
+  if (backgroundMusic) {
+    backgroundMusic.volume = 0.4;
+    console.log("   Background Music Volume: 0.4");
+  }
+  if (bumpSound) {
+    bumpSound.volume = 0.45;
+    console.log("   Bump Sound Volume: 0.45");
+  }
+  if (engineSound) {
+    engineSound.volume = 0.25;
+    console.log("   Engine Sound Volume: 0.25");
+  }
+  if (gameoverSound) {
+    gameoverSound.volume = 0.35;
+    console.log("   Gameover Sound Volume: 0.35");
+  }
+  if (winSound) {
+    winSound.volume = 0.5;
+    console.log("   Win Sound Volume: 0.5");
+  }
+  if (menuSound) {
+    menuSound.volume = 0.5;
+    console.log("   Menu Sound Volume: 0.5");
+  }
+  
+  // Attach menu sound to all buttons (UI elements only)
+  attachMenuSoundToButtons();
+}
+
+// Attach menu/button press sound to all HTML buttons
+function attachMenuSoundToButtons() {
+  if (!menuSound) return;
+  
+  // Select all button elements in the DOM
+  var buttons = document.querySelectorAll('button');
+  
+  buttons.forEach(function(button) {
+    button.addEventListener('click', function() {
+      // Play menu sound when button is clicked
+      menuSound.currentTime = 0;
+      menuSound.play().catch(function(error) {
+        console.log("❌ Menu sound play failed:", error);
+      });
+    });
+  });
+  
+  console.log("🎵 Menu sound attached to " + buttons.length + " buttons");
+}
+
+// Play background music on loop
+function playBackgroundMusic() {
+  if (backgroundMusic && backgroundMusic.paused) {
+    console.log("▶️ Playing background music");
+    backgroundMusic.currentTime = 0;
+    backgroundMusic.loop = true; // Enable seamless looping
+    
+    // Handle seamless looping by resetting when approaching end
+    backgroundMusic.addEventListener("ended", function() {
+      backgroundMusic.currentTime = 0;
+      backgroundMusic.play().catch(function(error) {
+        console.log("❌ Background music replay failed:", error);
+      });
+    }, { once: false });
+    
+    backgroundMusic.play().catch(function(error) {
+      console.log("❌ Background music autoplay blocked:", error);
+    });
+  }
+}
+
+// Stop background music
+function stopBackgroundMusic() {
+  if (backgroundMusic) {
+    backgroundMusic.pause();
+    backgroundMusic.currentTime = 0;
+  }
+}
+
+// Update music playback speed based on current episode
+function updateMusicSpeed() {
+  if (!backgroundMusic) return;
+  if (currentEpisode === "depressive") {
+    backgroundMusic.playbackRate = 0.4; // Slow music in depressive state
+    console.log("🎵 Music speed: 0.4x (depressive)");
+  } else if (currentEpisode === "manic") {
+    backgroundMusic.playbackRate = 2.0; // Speed up music in manic state
+    console.log("🎵 Music speed: 2.0x (manic)");
+  } else {
+    backgroundMusic.playbackRate = 1.0; // Normal speed in euthymia
+    console.log("🎵 Music speed: 1.0x (euthymia)");
+  }
+  
+  // Apply same playback rate to engine and bump sounds for consistency
+  updateSoundEffectsSpeed();
+}
+
+// Update engine and bump sound playback rates to match episode state
+function updateSoundEffectsSpeed() {
+  if (currentEpisode === "depressive") {
+    if (engineSound) engineSound.playbackRate = 0.4;
+    if (bumpSound) bumpSound.playbackRate = 0.4;
+    console.log("🔧 Sound effects speed: 0.4x (depressive)");
+  } else if (currentEpisode === "manic") {
+    if (engineSound) engineSound.playbackRate = 2.0;
+    if (bumpSound) bumpSound.playbackRate = 2.0;
+    console.log("🔧 Sound effects speed: 2.0x (manic)");
+  } else {
+    if (engineSound) engineSound.playbackRate = 1.0;
+    if (bumpSound) bumpSound.playbackRate = 1.0;
+    console.log("🔧 Sound effects speed: 1.0x (euthymia)");
+  }
+}
+
+// Play collision/bump sound (called only once per collision event via state toggle)
+function playBumpSound() {
+  if (!bumpSound) return;
+  console.log("💥 Playing bump sound");
+  bumpSound.currentTime = 0;
+  bumpSound.play().catch(function(error) {
+    console.log("❌ Bump sound play failed:", error);
+  });
+}
+
+// Play engine boost sound
+function playEngineSound() {
+  if (!engineSound) return;
+  console.log("⚡ Playing engine sound");
+  engineSound.currentTime = 0;
+  engineSound.play().catch(function(error) {
+    console.log("❌ Engine sound play failed:", error);
+  });
+}
+
+// Play game over sound
+function playGameoverSound() {
+  if (gameoverSound) {
+    console.log("🎬 Playing gameover sound");
+    gameoverSound.currentTime = 0;
+    gameoverSound.play().catch(function(error) {
+      console.log("❌ Gameover sound play failed:", error);
+    });
+  }
+}
+
+// Play win/level completion sound
+function playWinSound() {
+  if (winSound) {
+    console.log("🏆 Playing win sound");
+    winSound.currentTime = 0;
+    winSound.play().catch(function(error) {
+      console.log("❌ Win sound play failed:", error);
+    });
+  }
+}
 function formatTime(secs) {
   var m = Math.floor(secs / 60);
   var s = Math.floor(secs % 60);
   return m + ":" + (s < 10 ? "0" : "") + s;
 }
 
+// Toggle pause state and open the pause menu with level-specific buttons
+function togglePause() {
+  var pauseMenu = document.getElementById("pause-menu");
+  if (!pauseMenu) return;
+
+  if (gamePaused) {
+    // Resume game
+    gamePaused = false;
+    pauseMenu.classList.remove("show");
+    // Resume background music
+    if (backgroundMusic) {
+      backgroundMusic.play().catch(function(error) {
+        console.log("Background music resume failed:", error);
+      });
+    }
+    // Adjust mission start time to account for pause duration
+    var pauseDuration = Date.now() - pausedTime;
+    missionStart += pauseDuration;
+  } else {
+    // Pause game and open menu
+    gamePaused = true;
+    pausedTime = Date.now();
+    openPauseMenu();
+    pauseMenu.classList.add("show");
+    // Pause background music
+    if (backgroundMusic) {
+      backgroundMusic.pause();
+    }
+  }
+}
+
+// Dynamically populate pause menu buttons based on current level
+function openPauseMenu() {
+  var pauseMenu = document.getElementById("pause-menu");
+  if (!pauseMenu) return;
+  
+  var buttonsContainer = pauseMenu.querySelector(".pause-buttons");
+  if (!buttonsContainer) {
+    // Create buttons container if it doesn't exist
+    var card = pauseMenu.querySelector(".pause-card");
+    if (card) {
+      buttonsContainer = document.createElement("div");
+      buttonsContainer.className = "pause-buttons";
+      card.appendChild(buttonsContainer);
+    }
+  }
+  
+  if (!buttonsContainer) return;
+  
+  // Clear existing buttons
+  buttonsContainer.innerHTML = "";
+  
+  // Always add Resume Game button
+  var resumeBtn = document.createElement("button");
+  resumeBtn.className = "pause-btn primary";
+  resumeBtn.textContent = "Resume Game";
+  resumeBtn.onclick = function() {
+    resumeGame();
+  };
+  buttonsContainer.appendChild(resumeBtn);
+  
+  // Add Restart Level button only for main levels (not tutorial)
+  if (currentLevel !== "tutorial") {
+    var restartBtn = document.createElement("button");
+    restartBtn.className = "pause-btn";
+    restartBtn.textContent = "Restart Level";
+    restartBtn.onclick = function() {
+      restartFromPause();
+    };
+    buttonsContainer.appendChild(restartBtn);
+  }
+}
+
+// Resume game from pause
+function resumeGame() {
+  if (gamePaused) {
+    // Use togglePause to properly handle resume logic
+    togglePause();
+  }
+}
+
+// Restart mission from pause menu
+function restartFromPause() {
+  var pauseMenu = document.getElementById("pause-menu");
+  if (pauseMenu) {
+    pauseMenu.classList.remove("show");
+  }
+  gamePaused = false;
+  restartMission();
+}
+
 // Refresh the mission panel text — called every frame while mission is active
 function updateMissionHUD() {
   if (!missionActive || missionComplete) return;
+  
+  // Skip HUD update if paused
+  if (gamePaused) return;
+  
   missionElapsed = (Date.now() - missionStart) / 1000;
 
   var timerEl = document.getElementById("mission-timer");
 
   // For non-tutorial levels, show countdown timer
   if (currentLevel !== "tutorial") {
-    var levelTimeLimit = currentLevel === "level2" ? 45 : 30; // 45 seconds for Level 2, 30 for others
+    var levelTimeLimit = currentLevel === "level3" ? 60 : (currentLevel === "level2" ? 45 : 30);
     var timeRemaining = Math.max(0, levelTimeLimit - missionElapsed);
     timerEl.textContent = formatTime(timeRemaining);
     // Flash red when 10 seconds or less remain
@@ -778,10 +1319,11 @@ function updateMissionHUD() {
 
   // Check for timeout on non-tutorial levels
   if (currentLevel !== "tutorial" && !missionTimeoutShown) {
-    var levelTimeLimit = currentLevel === "level2" ? 45 : 30; // 45 seconds for Level 2, 30 for others
+    var levelTimeLimit = currentLevel === "level3" ? 60 : (currentLevel === "level2" ? 45 : 30);
     if (missionElapsed >= levelTimeLimit) {
       missionTimeoutShown = true;
       missionActive = false;
+      playGameoverSound();
       document.getElementById("level-timeout").classList.add("show");
       return;
     }
@@ -844,6 +1386,7 @@ function collectCheckpoint() {
   if (currentCP >= CHECKPOINTS.length) {
     missionComplete = true;
     missionActive = false;
+    playWinSound();
     showWinScreen();
   } else {
     var nextDot = document.getElementById("dot-" + currentCP);
@@ -897,6 +1440,9 @@ function restartMission() {
     notif.classList.remove("show");
   }
 
+  // Restart background music
+  playBackgroundMusic();
+  
   resetCar();
   beginMission();
 }
@@ -930,6 +1476,10 @@ function switchLevel(newLevel) {
   discoveredRoads = {}; // reset discovered roads on minimap
   exploredAreaCanvas = null; // reset explored area map
   exploredAreaCtx = null;
+  
+  // Restart background music for new level
+  playBackgroundMusic();
+  
   resetCar();
   beginMission();
   buildCheckpointMarkers(); // Rebuild markers for new checkpoint positions
@@ -1151,10 +1701,23 @@ function renderWithEffects() {
 
 // ─── ENTRY POINT ──────────────────────────────────────────────────────────────
 // Called by the Start button in index.html
+// Play menu button sound (can be called before initAudio)
+function playMenuSound() {
+  var menu = document.getElementById("menu-sound");
+  if (menu) {
+    menu.currentTime = 0;
+    menu.play().catch(function(error) {
+      console.log("❌ Menu sound play failed:", error);
+    });
+  }
+}
+
 function startGame() {
   document.getElementById("start-screen").style.display = "none";
   document.getElementById("hud").style.display = "block";
   gameRunning = true;
+  initAudio();
+  playBackgroundMusic();
   init();
   animate();
 }
@@ -1224,6 +1787,12 @@ function init() {
   window.addEventListener("keydown", function (e) {
     keys[e.code] = true;
     if (e.code === "KeyR") resetCar();
+    // Space to toggle pause
+    if (e.code === "Space") {
+      if (missionActive && !missionComplete) {
+        togglePause();
+      }
+    }
     // Developer shortcut: backtick to cycle through levels (tutorial → level1 → level2 → level3 → tutorial)
     if (e.code === "Backquote") {
       var levelCycle = ["tutorial", "level1", "level2", "level3"];
@@ -2618,6 +3187,13 @@ function drawMinimap() {
 // ─── CAR PHYSICS ──────────────────────────────────────────────────────────────
 function updateCar(dt) {
   var boost = keys["ShiftLeft"] || keys["ShiftRight"];
+  
+  // Play engine sound when boost starts (transition from not pressing to pressing Shift)
+  if (boost && !lastEngineBoostPressed) {
+    playEngineSound();
+  }
+  lastEngineBoostPressed = boost;
+  
   var maxSpeed = boost ? 0.55 : 0.32;
 
   // During depressive episode, significantly reduce car speed
@@ -2787,15 +3363,21 @@ function updateEpisodeEffects() {
 function animate() {
   if (!gameRunning) return;
   requestAnimationFrame(animate);
-  var dt = clock.getDelta();
-  updateCar(dt);
-  updateCamera();
-  updateLevel1Episodes(); // Update unpredictable episodes for Level 1
-  updateLevel2Episodes(); // Update unpredictable manic episodes for Level 2
-  updateEpisodeEffects();
-  updateMarkers(dt);
-  updateMissionHUD();
-  checkCheckpoints();
+  
+  // Skip game logic if paused
+  if (!gamePaused) {
+    var dt = clock.getDelta();
+    updateCar(dt);
+    updateCamera();
+    updateLevel1Episodes(); // Update unpredictable episodes for Level 1
+    updateLevel2Episodes(); // Update unpredictable manic episodes for Level 2
+    updateLevel3Episodes(); // Update mixed episodes for Level 3
+    updateEpisodeEffects();
+    updateMarkers(dt);
+    updateMissionHUD();
+    checkCheckpoints();
+  }
+  
   drawMinimap();
 
   // Rotate minimap based on episode configuration

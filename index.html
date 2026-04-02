@@ -10,7 +10,7 @@
     <!-- ── START SCREEN ── -->
     <div id="start-screen">
       <h1>A MIND IN MOTION</h1>
-      <button id="start-btn" onclick="startGame()">START DRIVING</button>
+      <button id="start-btn" onclick="playMenuSound(); startGame()">START DRIVING</button>
       <p style="margin-top: 20px; font-size: 12px">
         WASD or Arrow Keys · Hold Shift to boost
       </p>
@@ -59,6 +59,15 @@
 
     <!-- ── CHECKPOINT FLASH ── -->
     <div id="cp-flash"></div>
+
+    <!-- ── PAUSE MENU ── -->
+    <div id="pause-menu" class="pause-menu">
+      <div class="pause-card">
+        <h2>PAUSED</h2>
+        <p>Game paused</p>
+        <div class="pause-buttons"></div>
+      </div>
+    </div>
 
     <!-- ── TUTORIAL NOTIFICATION ── -->
     <div id="tutorial-notification" class="tutorial-notification"></div>
@@ -152,6 +161,26 @@
 
     <!-- Three.js library (must load before sketch.js) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- Audio Elements -->
+    <audio id="background-music" loop preload="auto">
+      <source src="assets/backgroundmusic.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="bump-sound" preload="auto">
+      <source src="assets/bump.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="engine-sound" preload="auto">
+      <source src="assets/engine.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="gameover-sound" preload="auto">
+      <source src="assets/gameover.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="win-sound" preload="auto">
+      <source src="assets/win.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="menu-sound" preload="auto">
+      <source src="assets/pressbutton.mp3" type="audio/mpeg" />
+    </audio>
 
     <!-- Level definitions (must load before sketch.js) -->
     <script src="levels/tutorial.js"></script>

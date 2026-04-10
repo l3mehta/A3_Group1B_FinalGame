@@ -413,7 +413,7 @@ function generateLevel1EpisodeSchedule() {
   var episodeCount = levelConfig.episodeCount || 3;
   var episodeDurationMin = levelConfig.episodeDurationMin || 2000;
   var episodeDurationMax = levelConfig.episodeDurationMax || 6000;
-  var levelDuration = 60000; // 60 seconds in milliseconds
+  var levelDuration = 45000; // 45 seconds in milliseconds
   var maxGapBetweenEpisodes = 3000; // Maximum 3 seconds between end of one episode and start of next
   var minGapBetweenEpisodes = 0.5 * 1000; // Minimum 0.5 seconds gap for unpredictability
 
@@ -484,7 +484,7 @@ function generateLevel2EpisodeSchedule() {
   var episodeCount = levelConfig.episodeCount || 2;
   var episodeDurationMin = levelConfig.episodeDurationMin || 7000;
   var episodeDurationMax = levelConfig.episodeDurationMax || 15000;
-  var levelDuration = 60000; // 60 seconds in milliseconds for Level 2
+  var levelDuration = 45000; // 45 seconds in milliseconds for Level 2
   var maxGapBetweenEpisodes = 3000; // Maximum 3 seconds between end of one episode and start of next
   var minGapBetweenEpisodes = 0.5 * 1000; // Minimum 0.5 seconds gap for unpredictability
 
@@ -1347,7 +1347,7 @@ function updateMissionHUD() {
 
   // For non-tutorial levels, show countdown timer
   if (currentLevel !== "tutorial") {
-    var levelTimeLimit = 60; // 60 seconds for all levels (tutorial, level1, level2, level3)
+    var levelTimeLimit = 45; // 45 seconds for all levels (tutorial, level1, level2, level3)
     var timeRemaining = Math.max(0, levelTimeLimit - missionElapsed);
     timerEl.textContent = formatTime(timeRemaining);
     // Flash red when 10 seconds or less remain
@@ -1360,7 +1360,7 @@ function updateMissionHUD() {
 
   // Check for timeout on non-tutorial levels
   if (currentLevel !== "tutorial" && !missionTimeoutShown) {
-    var levelTimeLimit = 60; // 60 seconds for all levels
+    var levelTimeLimit = 45; // 45 seconds for all levels
     if (missionElapsed >= levelTimeLimit) {
       missionTimeoutShown = true;
       missionActive = false;

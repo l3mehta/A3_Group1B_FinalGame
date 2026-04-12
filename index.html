@@ -78,7 +78,40 @@
     </div>
 
     <!-- ── TUTORIAL NOTIFICATION ── -->
-    <div id="tutorial-notification" class="tutorial-notification"></div>
+    <div id="tutorial-notification" class="tutorial-notification">
+      <div id="tutorial-message-text"></div>
+    </div>
+
+    <!-- ── TUTORIAL SKIP BUTTON ── -->
+    <button
+      id="tutorial-skip-btn"
+      class="tutorial-skip-btn"
+      onclick="
+        playMenuSound();
+        skipTutorial();
+      "
+      title="Skip Tutorial"
+    >
+      <svg class="skip-arrow" viewBox="0 0 40 40" width="20" height="20">
+        <!-- Right-pointing arrow with soft, rounded style -->
+        <path
+          d="M 8 20 L 30 20"
+          stroke="currentColor"
+          stroke-width="3"
+          fill="none"
+          stroke-linecap="round"
+        />
+        <path
+          d="M 20 10 L 30 20 L 20 30"
+          stroke="currentColor"
+          stroke-width="3"
+          fill="none"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+      <span>Skip</span>
+    </button>
 
     <!-- ── MISSION BAR FOCUS OVERLAY ── -->
     <div id="mission-focus-overlay" class="mission-focus-overlay"></div>
@@ -138,20 +171,56 @@
     </div>
 
     <!-- ── LEVEL 3 COMPLETION ── -->
-    <div id="level3-completion" class="tutorial-completion">
-      <div class="tutorial-completion-card">
+    <div id="level3-completion" class="tutorial-completion level3-completion">
+      <div class="tutorial-completion-card level3-card">
+        <div class="level3-header">
+          <svg class="level3-star" viewBox="0 0 100 100" width="80" height="80">
+            <defs>
+              <linearGradient
+                id="starGradient"
+                x1="0%"
+                y1="0%"
+                x2="100%"
+                y2="100%"
+              >
+                <stop
+                  offset="0%"
+                  style="stop-color: #7ef5a8; stop-opacity: 1"
+                />
+                <stop
+                  offset="100%"
+                  style="stop-color: #5ed89a; stop-opacity: 1"
+                />
+              </linearGradient>
+            </defs>
+            <!-- Outer star -->
+            <path
+              d="M 50 10 L 61 40 L 90 40 L 67 60 L 78 90 L 50 70 L 22 90 L 33 60 L 10 40 L 39 40 Z"
+              fill="url(#starGradient)"
+            />
+            <!-- Inner decorative circles -->
+            <circle cx="50" cy="50" r="8" fill="#7ef5a8" opacity="0.6" />
+          </svg>
+        </div>
         <h2>Congratulations!</h2>
         <p>You have completed LEVEL 3</p>
         <p class="tutorial-subtitle">You've finished the game!</p>
+        <p class="level3-thank-you">Thank you for playing our game</p>
         <div class="tutorial-completion-buttons">
-          <button class="tutorial-btn" onclick="restartMission()">
-            Replay Level 3
+          <button class="tutorial-btn" onclick="switchLevel('level1')">
+            Level 1
+          </button>
+          <button class="tutorial-btn" onclick="switchLevel('level2')">
+            Level 2
+          </button>
+          <button class="tutorial-btn" onclick="switchLevel('level3')">
+            Level 3
           </button>
           <button
             class="tutorial-btn primary"
             onclick="switchLevel('tutorial')"
           >
-            Return to Tutorial
+            Return to Title Screen
           </button>
         </div>
       </div>
@@ -162,7 +231,7 @@
       <div class="tutorial-completion-card">
         <h2>Time's Up!</h2>
         <p>You didn't complete this level in time.</p>
-        <p class="tutorial-subtitle">Complete the level within 30 seconds!</p>
+        <p class="tutorial-subtitle">Complete the level within 45 seconds!</p>
         <div class="tutorial-completion-buttons">
           <button class="tutorial-btn" onclick="restartMission()">
             Retry This Level
@@ -203,17 +272,23 @@
     <audio id="bump-sound" preload="auto">
       <source src="assets/bump.mp3" type="audio/mpeg" />
     </audio>
-    <audio id="engine-sound" preload="auto">
-      <source src="assets/engine.mp3" type="audio/mpeg" />
+    <audio id="engine-sound" loop preload="auto">
+      <source src="assets/newengine.mp3" type="audio/mpeg" />
     </audio>
     <audio id="gameover-sound" preload="auto">
-      <source src="assets/gameover.mp3" type="audio/mpeg" />
+      <source src="assets/newlosesound.wav" type="audio/wav" />
     </audio>
     <audio id="win-sound" preload="auto">
-      <source src="assets/win.mp3" type="audio/mpeg" />
+      <source src="assets/newwinsound.wav" type="audio/wav" />
     </audio>
     <audio id="menu-sound" preload="auto">
-      <source src="assets/pressbutton.mp3" type="audio/mpeg" />
+      <source src="assets/buttonclick.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="car-idle-sound" loop preload="auto">
+      <source src="assets/caridle.mp3" type="audio/mpeg" />
+    </audio>
+    <audio id="checkpoint-sound" preload="auto">
+      <source src="assets/checkpoint.wav" type="audio/wav" />
     </audio>
 
     <!-- Level definitions (must load before sketch.js) -->

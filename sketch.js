@@ -154,6 +154,11 @@ let engineSound = null;
 let gameoverSound = null;
 let winSound = null;
 let menuSound = null;
+let carIdleSound = null;
+let checkpointSound = null;
+let carIdleSoundTargetVolume = 0; // Target volume for smooth fading
+let engineSoundTargetVolume = 0; // Target volume for smooth engine fade based on Shift key
+let checkpointSoundPlayed = {}; // Track which checkpoints have played their sound
 let isCurrentlyColliding = false; // State toggle: only play sound on collision START, not every frame
 let lastEngineBoostPressed = false; // Track if shift was pressed last frame
 
@@ -242,8 +247,12 @@ function checkTutorialKeyCompletion() {
   if (allKeyPressed) {
     flashSuccessOverlay();
     var notif = document.getElementById("tutorial-notification");
+    var skipBtn = document.getElementById("tutorial-skip-btn");
     if (notif) {
       notif.classList.remove("show");
+    }
+    if (skipBtn) {
+      skipBtn.classList.remove("show");
     }
     tutorialStepIndex++;
     // Wait for success overlay (1 second) + CSS transition (0.3s) before showing next step
@@ -277,10 +286,15 @@ function showNextTutorialStep() {
 
   var step = tutorialFlow[tutorialStepIndex];
   var notif = document.getElementById("tutorial-notification");
-  if (!notif) return;
+  var skipBtn = document.getElementById("tutorial-skip-btn");
+  var messageText = document.getElementById("tutorial-message-text");
+  if (!notif || !messageText) return;
 
-  notif.textContent = step.message;
+  messageText.textContent = step.message;
   notif.className = "tutorial-notification show";
+  if (skipBtn) {
+    skipBtn.className = "tutorial-skip-btn show";
+  }
 
   // Detect which episode this step represents and update currentEpisode
   if (
@@ -314,6 +328,7 @@ function showNextTutorialStep() {
     glowMissionPanel();
     setTimeout(function () {
       notif.classList.remove("show");
+      if (skipBtn) skipBtn.classList.remove("show");
       tutorialStepIndex++;
       // Wait for CSS transition (0.3s) to complete before showing next step
       setTimeout(function () {
@@ -326,6 +341,7 @@ function showNextTutorialStep() {
     glowMinimapPanel();
     setTimeout(function () {
       notif.classList.remove("show");
+      if (skipBtn) skipBtn.classList.remove("show");
       tutorialStepIndex++;
       // Wait for CSS transition (0.3s) to complete before showing next step
       setTimeout(function () {
@@ -341,6 +357,7 @@ function showNextTutorialStep() {
     setTimeout(function () {
       if (!tutorialCompleted) {
         notif.classList.remove("show");
+        if (skipBtn) skipBtn.classList.remove("show");
         tutorialStepIndex++;
         // Wait for CSS transition (0.3s) to complete before showing next step
         setTimeout(function () {
@@ -1130,6 +1147,8 @@ function initAudio() {
   gameoverSound = document.getElementById("gameover-sound");
   winSound = document.getElementById("win-sound");
   menuSound = document.getElementById("menu-sound");
+  carIdleSound = document.getElementById("car-idle-sound");
+  checkpointSound = document.getElementById("checkpoint-sound");
 
   // Debug: Log audio element status
   console.log("🔊 Audio System Initialized:");
@@ -1142,6 +1161,11 @@ function initAudio() {
   console.log("   Gameover Sound:", gameoverSound ? "✓ Found" : "✗ Not found");
   console.log("   Win Sound:", winSound ? "✓ Found" : "✗ Not found");
   console.log("   Menu Sound:", menuSound ? "✓ Found" : "✗ Not found");
+  console.log("   Car Idle Sound:", carIdleSound ? "✓ Found" : "✗ Not found");
+  console.log(
+    "   Checkpoint Sound:",
+    checkpointSound ? "✓ Found" : "✗ Not found",
+  );
 
   // Set reasonable volume levels
   if (backgroundMusic) {
@@ -1154,7 +1178,12 @@ function initAudio() {
   }
   if (engineSound) {
     engineSound.volume = 0.25;
-    console.log("   Engine Sound Volume: 0.25");
+    engineSound.loop = true; // Enable looping for continuous engine sound
+    // Start playing silently (volume = 0) so we can fade in/out smoothly
+    engineSound.play().catch(function (error) {
+      console.log("Engine sound autoplay blocked:", error);
+    });
+    console.log("   Engine Sound Volume: 0.25 (fades with Shift key)");
   }
   if (gameoverSound) {
     gameoverSound.volume = 0.35;
@@ -1168,6 +1197,18 @@ function initAudio() {
     menuSound.volume = 0.5;
     console.log("   Menu Sound Volume: 0.5");
   }
+  if (carIdleSound) {
+    carIdleSound.loop = true;
+    carIdleSound.volume = 0;
+    carIdleSound.play().catch(function (error) {
+      console.log("Car idle sound autoplay blocked:", error);
+    });
+    console.log("   Car Idle Sound: Playing (volume controlled by speed)");
+  }
+  if (checkpointSound) {
+    checkpointSound.volume = 0.6;
+    console.log("   Checkpoint Sound Volume: 0.6");
+  }
 
   // Attach menu sound to all buttons (UI elements only)
   attachMenuSoundToButtons();
@@ -1177,20 +1218,40 @@ function initAudio() {
 function attachMenuSoundToButtons() {
   if (!menuSound) return;
 
-  // Select all button elements in the DOM
-  var buttons = document.querySelectorAll("button");
+  // Select ONLY specific UI menu buttons to avoid interference with driving input
+  // These button selectors target: Start, Restart, Next (level progression), and Resume
+  var menuButtons = document.querySelectorAll(
+    'button[onclick*="startGame"], button[onclick*="restartMission"], button[onclick*="switchLevel"], button[onclick*="resumeGame"]',
+  );
 
-  buttons.forEach(function (button) {
-    button.addEventListener("click", function () {
-      // Play menu sound when button is clicked
-      menuSound.currentTime = 0;
-      menuSound.play().catch(function (error) {
-        console.log("❌ Menu sound play failed:", error);
-      });
+  var playButtonSound = function () {
+    menuSound.currentTime = 0;
+    menuSound.play().catch(function (error) {
+      console.log("❌ Menu sound play failed:", error);
     });
+  };
+
+  menuButtons.forEach(function (button) {
+    button.addEventListener("click", playButtonSound);
   });
 
-  console.log("🎵 Menu sound attached to " + buttons.length + " buttons");
+  console.log(
+    "🔘 Menu sound (buttonclick.mp3) attached to " +
+      menuButtons.length +
+      " specific UI buttons",
+  );
+  console.log("   ✓ Targets: Start, Restart, Next Level, Resume");
+  console.log("   ✓ Driving input (WASD/Arrows/Shift/Space) remains silent");
+}
+
+// Skip tutorial and jump to level 1
+function skipTutorial() {
+  if (tutorialActive) {
+    console.log("⏭️ Skipping tutorial...");
+    tutorialActive = false;
+    tutorialCompleted = true;
+    switchLevel("level1");
+  }
 }
 
 // Play background music on loop
@@ -1198,19 +1259,7 @@ function playBackgroundMusic() {
   if (backgroundMusic && backgroundMusic.paused) {
     console.log("▶️ Playing background music");
     backgroundMusic.currentTime = 0;
-    backgroundMusic.loop = true; // Enable seamless looping
-
-    // Handle seamless looping by resetting when approaching end
-    backgroundMusic.addEventListener(
-      "ended",
-      function () {
-        backgroundMusic.currentTime = 0;
-        backgroundMusic.play().catch(function (error) {
-          console.log("❌ Background music replay failed:", error);
-        });
-      },
-      { once: false },
-    );
+    backgroundMusic.loop = true; // Use native loop property for gapless looping
 
     backgroundMusic.play().catch(function (error) {
       console.log("❌ Background music autoplay blocked:", error);
@@ -1272,19 +1321,33 @@ function playBumpSound() {
 }
 
 // Play engine boost sound
-function playEngineSound() {
+// Update engine sound volume based on Shift key state (smooth fading)
+function updateEngineSound() {
   if (!engineSound) return;
-  console.log("⚡ Playing engine sound");
-  engineSound.currentTime = 0;
-  engineSound.play().catch(function (error) {
-    console.log("❌ Engine sound play failed:", error);
-  });
+
+  var boost = keys["ShiftLeft"] || keys["ShiftRight"];
+  var maxEngineVolume = 0.25;
+
+  // Set target volume based on boost state
+  engineSoundTargetVolume = boost ? maxEngineVolume : 0;
+
+  // Smooth fade: interpolate toward target volume
+  var fadeSpeed = 0.08; // Controls fade speed (lower = smoother/slower, higher = faster)
+  var currentVolume = engineSound.volume;
+  var volumeDifference = engineSoundTargetVolume - currentVolume;
+
+  if (Math.abs(volumeDifference) > 0.001) {
+    // Smoothly interpolate (similar to Mathf.Lerp)
+    engineSound.volume = currentVolume + volumeDifference * fadeSpeed;
+  } else {
+    engineSound.volume = engineSoundTargetVolume;
+  }
 }
 
 // Play game over sound
 function playGameoverSound() {
   if (gameoverSound) {
-    console.log("🎬 Playing gameover sound");
+    console.log("💀 Playing gameover sound");
     gameoverSound.currentTime = 0;
     gameoverSound.play().catch(function (error) {
       console.log("❌ Gameover sound play failed:", error);
@@ -1292,7 +1355,7 @@ function playGameoverSound() {
   }
 }
 
-// Play win/level completion sound
+// Play win/level completion sound (ONLY on official level completion, NOT at checkpoints)
 function playWinSound() {
   if (winSound) {
     console.log("🏆 Playing win sound");
@@ -1529,6 +1592,9 @@ function checkCheckpoints() {
 }
 
 function collectCheckpoint() {
+  // Play checkpoint sound once
+  playCheckpointSound();
+
   // Green screen flash
   var flash = document.getElementById("cp-flash");
   flash.classList.add("flash");
@@ -1558,6 +1624,9 @@ function collectCheckpoint() {
 }
 
 function collectCheckpointTutorial(checkpointIndex) {
+  // Play checkpoint sound once (only sound for checkpoint)
+  playCheckpointSound();
+
   // Green screen flash
   var flash = document.getElementById("cp-flash");
   flash.classList.add("flash");
@@ -1565,15 +1634,16 @@ function collectCheckpointTutorial(checkpointIndex) {
     flash.classList.remove("flash");
   }, 300);
 
-  // Play success sound
-  playWinSound();
-
   // Advance to next tutorial step after the flash
   setTimeout(function () {
     if (tutorialActive && !tutorialCompleted) {
       var notif = document.getElementById("tutorial-notification");
+      var skipBtn = document.getElementById("tutorial-skip-btn");
       if (notif) {
         notif.classList.remove("show");
+      }
+      if (skipBtn) {
+        skipBtn.classList.remove("show");
       }
       tutorialStepIndex++;
       // Wait for CSS transition (0.3s) to complete before showing next step
@@ -1627,8 +1697,12 @@ function restartMission() {
   tutorialKeysPressed = {};
   tutorialCompleted = false;
   var notif = document.getElementById("tutorial-notification");
+  var skipBtn = document.getElementById("tutorial-skip-btn");
   if (notif) {
     notif.classList.remove("show");
+  }
+  if (skipBtn) {
+    skipBtn.classList.remove("show");
   }
 
   // Restart background music
@@ -1653,8 +1727,12 @@ function switchLevel(newLevel) {
     tutorialActive = false;
     tutorialCompleted = false;
     var notif = document.getElementById("tutorial-notification");
+    var skipBtn = document.getElementById("tutorial-skip-btn");
     if (notif) {
       notif.classList.remove("show");
+    }
+    if (skipBtn) {
+      skipBtn.classList.remove("show");
     }
   }
 
@@ -1892,6 +1970,47 @@ function renderWithEffects() {
 
 // ─── ENTRY POINT ──────────────────────────────────────────────────────────────
 // Called by the Start button in index.html
+// Update car idle sound volume based on current speed with smooth fading
+function updateCarIdleSound() {
+  if (!carIdleSound) return;
+
+  // Minimum volume threshold (0.05 = 5% so sound never completely disappears)
+  const MIN_VOLUME = 0.05;
+  // Maximum volume (0.4 for car idle, scaled down from louder sounds)
+  const MAX_VOLUME = 0.4;
+  // Speed at which we reach max volume (e.g., at 50 km/h = full volume)
+  const MAX_SPEED = 50;
+  // Smooth fading speed (lower = smoother transitions)
+  const FADE_SPEED = 0.05;
+
+  // Calculate target volume based on speed
+  // displaySpeed is in km/h, scale it to 0-1 range
+  var speedRatio = Math.min(displaySpeed / MAX_SPEED, 1.0);
+  var targetVolume = MIN_VOLUME + speedRatio * (MAX_VOLUME - MIN_VOLUME);
+
+  // Smooth fade toward target volume
+  carIdleSoundTargetVolume = targetVolume;
+  var currentVolume = carIdleSound.volume;
+  var volumeDifference = carIdleSoundTargetVolume - currentVolume;
+
+  if (Math.abs(volumeDifference) > 0.001) {
+    // Smoothly interpolate toward target volume
+    carIdleSound.volume = currentVolume + volumeDifference * FADE_SPEED;
+  } else {
+    carIdleSound.volume = carIdleSoundTargetVolume;
+  }
+}
+
+// Play checkpoint sound as a oneshot (non-looping)
+function playCheckpointSound() {
+  if (!checkpointSound) return;
+  console.log("🚩 Playing checkpoint sound");
+  checkpointSound.currentTime = 0;
+  checkpointSound.play().catch(function (error) {
+    console.log("❌ Checkpoint sound play failed:", error);
+  });
+}
+
 // Play menu button sound (can be called before initAudio)
 function playMenuSound() {
   var menu = document.getElementById("menu-sound");
@@ -3397,10 +3516,8 @@ function drawMinimap() {
 function updateCar(dt) {
   var boost = keys["ShiftLeft"] || keys["ShiftRight"];
 
-  // Play engine sound when boost starts (transition from not pressing to pressing Shift)
-  if (boost && !lastEngineBoostPressed) {
-    playEngineSound();
-  }
+  // Engine sound volume is now handled by updateEngineSound() with smooth fading
+  // No need to call playEngineSound() anymore
   lastEngineBoostPressed = boost;
 
   var maxSpeed = 0.32;
@@ -3602,6 +3719,12 @@ function animate() {
     updateMissionHUD();
     checkCheckpoints();
   }
+
+  // Update car idle sound volume based on speed (even when paused for smooth transitions)
+  updateCarIdleSound();
+
+  // Update engine sound volume with smooth fading based on Shift key state
+  updateEngineSound();
 
   drawMinimap();
 

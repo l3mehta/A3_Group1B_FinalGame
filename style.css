@@ -496,7 +496,89 @@ body {
     0 0 0 1px rgba(126, 245, 168, 0.08),
     0 12px 48px rgba(0, 0, 0, 0.7);
   max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
 }
+
+#tutorial-message-text {
+  flex: 1;
+}
+
+/* Skip Button Styling */
+.tutorial-skip-btn {
+  position: fixed;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: linear-gradient(
+    135deg,
+    rgba(180, 220, 200, 0.15) 0%,
+    rgba(150, 200, 180, 0.08) 100%
+  );
+  border: 1.5px solid rgba(180, 220, 200, 0.4);
+  border-radius: 12px;
+  color: rgba(180, 220, 200, 0.85);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(150, 200, 180, 0.1);
+  text-transform: uppercase;
+  outline: none;
+  user-select: none;
+  z-index: 130;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tutorial-skip-btn:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(180, 220, 200, 0.25) 0%,
+    rgba(150, 200, 180, 0.15) 100%
+  );
+  border-color: rgba(180, 220, 200, 0.6);
+  color: rgba(200, 240, 220, 1);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.12),
+    0 6px 20px rgba(150, 200, 180, 0.2),
+    0 0 20px rgba(180, 220, 200, 0.15);
+}
+
+.tutorial-skip-btn:active {
+  transform: translateY(0px);
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(150, 200, 180, 0.1);
+}
+
+.skip-arrow {
+  color: rgba(180, 220, 200, 0.85);
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
+}
+
+.tutorial-skip-btn:hover .skip-arrow {
+  transform: translateX(3px);
+  color: rgba(200, 240, 220, 1);
+}
+
+.tutorial-skip-btn.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .tutorial-notification.show {
   opacity: 1;
 }
@@ -550,6 +632,7 @@ body {
   display: flex;
   gap: 16px;
   justify-content: center;
+  flex-wrap: wrap;
 }
 .tutorial-btn {
   background: rgba(126, 245, 168, 0.15);
@@ -577,6 +660,88 @@ body {
 .tutorial-btn.primary:hover {
   background: rgba(126, 245, 168, 0.4);
   box-shadow: 0 0 24px rgba(126, 245, 168, 0.5);
+}
+
+/* ── LEVEL 3 COMPLETION SCREEN ── */
+#level3-completion {
+  transition: opacity 0.8s ease-out;
+}
+
+#level3-completion.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.level3-completion {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.85) 0%,
+    rgba(6, 14, 22, 0.9) 100%
+  );
+}
+
+.level3-card {
+  background: linear-gradient(
+    135deg,
+    rgba(6, 14, 22, 0.97) 0%,
+    rgba(15, 30, 45, 0.97) 100%
+  );
+  border: 2px solid rgba(126, 245, 168, 0.6);
+  border-radius: 28px;
+  padding: 64px 80px;
+  max-width: 650px;
+  box-shadow:
+    0 0 120px rgba(126, 245, 168, 0.35),
+    0 0 40px rgba(126, 245, 168, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.level3-header {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 32px;
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.level3-star {
+  filter: drop-shadow(0 0 20px rgba(126, 245, 168, 0.6))
+    drop-shadow(0 0 40px rgba(126, 245, 168, 0.3));
+}
+
+@keyframes pulseGlow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 20px rgba(126, 245, 168, 0.6))
+      drop-shadow(0 0 40px rgba(126, 245, 168, 0.3)) brightness(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 30px rgba(126, 245, 168, 0.8))
+      drop-shadow(0 0 60px rgba(126, 245, 168, 0.5)) brightness(1.1);
+  }
+}
+
+.level3-card h2 {
+  font-size: 48px;
+  color: #7ef5a8;
+  text-shadow: 0 0 20px rgba(126, 245, 168, 0.5);
+  letter-spacing: 0px;
+  margin-bottom: 24px;
+}
+
+.level3-card p {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 20px;
+}
+
+.level3-thank-you {
+  font-size: 16px;
+  color: rgba(126, 245, 168, 0.9);
+  font-style: italic;
+  margin-top: 24px;
+  margin-bottom: 40px;
+  line-height: 1.6;
+  text-shadow: 0 0 10px rgba(126, 245, 168, 0.3);
 }
 
 /* ── MISSION PANEL GLOW ── */
